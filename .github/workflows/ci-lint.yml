@@ -1,0 +1,17 @@
+name: CI Lint
+
+on:
+  pull_request:
+    branches:
+      - main
+      - development
+
+jobs:
+  commitlint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Conventional Commits Check
+        uses: wagoid/commitlint-github-action@v5
