@@ -13,6 +13,7 @@ import (
 
 	"github.com/shophub-project-2026/shop/internal/config"
 	"github.com/shophub-project-2026/shop/internal/server/handlers"
+	"github.com/shophub-project-2026/shop/internal/server/middleware"
 )
 
 // Server is the top-level HTTP server for the Shop service. It owns the
@@ -34,10 +35,16 @@ func New(cfg *config.Config, logger *slog.Logger) *Server {
 	mux.HandleFunc("GET /healthz", health.Live)
 	mux.HandleFunc("GET /readyz", health.Ready)
 
+	// Logging is applied at the outermost layer so probe traffic is
+	// captured alongside business endpoints. If probes become noisy in
+	// production, filter by path inside the middleware rather than
+	// dropping them from the chain entirely.
+	handler := middleware.Logging(logger)(mux)
+
 	return &Server{
 		httpServer: &http.Server{
 			Addr:              cfg.HTTPAddr,
-			Handler:           mux,
+			Handler:           handler,
 			ReadHeaderTimeout: 5 * time.Second,
 		},
 		health:     health,
