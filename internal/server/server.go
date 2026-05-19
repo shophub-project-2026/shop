@@ -12,14 +12,13 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/shophub-project-2026/shop/internal/articles"
 	"github.com/shophub-project-2026/shop/internal/config"
 	"github.com/shophub-project-2026/shop/internal/server/handlers"
 	"github.com/shophub-project-2026/shop/internal/server/middleware"
 )
 
-// Server is the top-level HTTP server for the Shop service. It owns the
-// http.Server, the route mux and the readiness handler so the lifecycle
-// (mark ready, mark not-ready, shut down) is coordinated in one place.
+// Server is the top-level HTTP server for the Shop service.
 type Server struct {
 	httpServer *http.Server
 	health     *handlers.Health
@@ -28,7 +27,6 @@ type Server struct {
 }
 
 // New constructs a Server bound to cfg.HTTPAddr with all routes wired.
-// It does not start the listener -- call Run to do that.
 func New(cfg *config.Config, logger *slog.Logger, pool *pgxpool.Pool) *Server {
 	health := handlers.NewHealth()
 
@@ -36,12 +34,12 @@ func New(cfg *config.Config, logger *slog.Logger, pool *pgxpool.Pool) *Server {
 	mux.HandleFunc("GET /healthz", health.Live)
 	mux.HandleFunc("GET /readyz", health.Ready)
 
-	_ = pool // handlers added in Sprint A2+
+	adminMW := middleware.Admin(cfg.AdminKey)
 
-	// Logging is applied at the outermost layer so probe traffic is
-	// captured alongside business endpoints. If probes become noisy in
-	// production, filter by path inside the middleware rather than
-	// dropping them from the chain entirely.
+	articleRepo := articles.NewPGRepository(pool)
+	articleHandler := articles.NewHandler(articleRepo, logger)
+	articleHandler.RegisterRoutes(mux, adminMW)
+
 	handler := middleware.Logging(logger)(mux)
 
 	return &Server{
@@ -56,11 +54,7 @@ func New(cfg *config.Config, logger *slog.Logger, pool *pgxpool.Pool) *Server {
 	}
 }
 
-// Run starts the HTTP listener and blocks until ctx is cancelled (e.g.
-// by a SIGTERM handler in main), then performs a graceful shutdown
-// bounded by cfg.ShutdownTimeout. The readiness probe is flipped to
-// ready right before serving so the load balancer can route to us, and
-// flipped to not-ready as soon as ctx is cancelled so it can drain.
+// Run starts the HTTP listener and blocks until ctx is cancelled.
 func (s *Server) Run(ctx context.Context) error {
 	errCh := make(chan error, 1)
 	go func() {
