@@ -1,0 +1,18 @@
+# Dependencies
+node_modules/
+vendor/
+
+# Environment
+.env
+.env.*
+
+# Build
+bin/
+dist/
+coverage.out
+
+# IDEs
+.idea/
+.vscode/
+*.swp
+.DS_Store
