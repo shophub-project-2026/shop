@@ -13,7 +13,9 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/shophub-project-2026/shop/internal/articles"
+	"github.com/shophub-project-2026/shop/internal/cart"
 	"github.com/shophub-project-2026/shop/internal/config"
+	"github.com/shophub-project-2026/shop/internal/orders"
 	"github.com/shophub-project-2026/shop/internal/server/handlers"
 	"github.com/shophub-project-2026/shop/internal/server/middleware"
 )
@@ -39,6 +41,14 @@ func New(cfg *config.Config, logger *slog.Logger, pool *pgxpool.Pool) *Server {
 	articleRepo := articles.NewPGRepository(pool)
 	articleHandler := articles.NewHandler(articleRepo, logger)
 	articleHandler.RegisterRoutes(mux, adminMW)
+
+	cartStore := cart.NewStore()
+	cartHandler := cart.NewHandler(cartStore, logger)
+	cartHandler.RegisterRoutes(mux)
+
+	orderRepo := orders.NewPGRepository(pool)
+	orderHandler := orders.NewHandler(orderRepo, cartStore, articleRepo, logger)
+	orderHandler.RegisterRoutes(mux, adminMW)
 
 	handler := middleware.Logging(logger)(mux)
 
