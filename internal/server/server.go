@@ -16,6 +16,7 @@ import (
 	"github.com/shophub-project-2026/shop/internal/cart"
 	"github.com/shophub-project-2026/shop/internal/config"
 	"github.com/shophub-project-2026/shop/internal/orders"
+	"github.com/shophub-project-2026/shop/internal/payment"
 	"github.com/shophub-project-2026/shop/internal/server/handlers"
 	"github.com/shophub-project-2026/shop/internal/server/middleware"
 )
@@ -29,7 +30,8 @@ type Server struct {
 }
 
 // New constructs a Server bound to cfg.HTTPAddr with all routes wired.
-func New(cfg *config.Config, logger *slog.Logger, pool *pgxpool.Pool) *Server {
+// ethClient may be nil — payment endpoints are disabled when no RPC is configured.
+func New(cfg *config.Config, logger *slog.Logger, pool *pgxpool.Pool, ethClient payment.EthClient) *Server {
 	health := handlers.NewHealth()
 
 	mux := http.NewServeMux()
@@ -39,16 +41,18 @@ func New(cfg *config.Config, logger *slog.Logger, pool *pgxpool.Pool) *Server {
 	adminMW := middleware.Admin(cfg.AdminKey)
 
 	articleRepo := articles.NewPGRepository(pool)
-	articleHandler := articles.NewHandler(articleRepo, logger)
-	articleHandler.RegisterRoutes(mux, adminMW)
+	articles.NewHandler(articleRepo, logger).RegisterRoutes(mux, adminMW)
 
 	cartStore := cart.NewStore()
-	cartHandler := cart.NewHandler(cartStore, logger)
-	cartHandler.RegisterRoutes(mux)
+	cart.NewHandler(cartStore, logger).RegisterRoutes(mux)
 
 	orderRepo := orders.NewPGRepository(pool)
-	orderHandler := orders.NewHandler(orderRepo, cartStore, articleRepo, logger)
-	orderHandler.RegisterRoutes(mux, adminMW)
+	orders.NewHandler(orderRepo, cartStore, articleRepo, logger).RegisterRoutes(mux, adminMW)
+
+	if ethClient != nil {
+		payment.NewHandler(orderRepo, cartStore, ethClient, cfg.EthWallet, cfg.EthPriceUSD, logger).
+			RegisterRoutes(mux)
+	}
 
 	handler := middleware.Logging(logger)(mux)
 

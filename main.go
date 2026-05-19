@@ -9,6 +9,7 @@ import (
 
 	"github.com/shophub-project-2026/shop/internal/config"
 	"github.com/shophub-project-2026/shop/internal/db"
+	"github.com/shophub-project-2026/shop/internal/payment"
 	"github.com/shophub-project-2026/shop/internal/server"
 )
 
@@ -47,7 +48,21 @@ func run() error {
 	}
 	logger.Info("migrations applied")
 
-	srv := server.New(cfg, logger, pool)
+	// Ethereum client is optional — payment endpoints are disabled when
+	// SHOP_ETH_RPC_URL is not configured (e.g. local dev without testnet).
+	var ethClient payment.EthClient
+	if cfg.EthRPCURL != "" {
+		c, err := payment.NewEthClient(ctx, cfg.EthRPCURL)
+		if err != nil {
+			return err
+		}
+		ethClient = c
+		logger.Info("ethereum client connected", "rpc", cfg.EthRPCURL)
+	} else {
+		logger.Info("SHOP_ETH_RPC_URL not set, payment endpoints disabled")
+	}
+
+	srv := server.New(cfg, logger, pool, ethClient)
 	return srv.Run(ctx)
 }
 
