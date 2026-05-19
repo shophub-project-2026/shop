@@ -26,6 +26,16 @@ type Config struct {
 
 	// LogLevel: "debug", "info", "warn", "error".
 	LogLevel string
+
+	// Database connection parameters.
+	DBHost     string
+	DBPort     string
+	DBName     string
+	DBUser     string
+	DBPassword string
+
+	// Admin API key — required in X-Admin-Key header for write endpoints.
+	AdminKey string
 }
 
 // Load reads the configuration from environment variables, applies sane
@@ -36,6 +46,12 @@ func Load() (*Config, error) {
 		Environment:     getEnv("SHOP_ENV", "development"),
 		LogLevel:        getEnv("SHOP_LOG_LEVEL", "info"),
 		ShutdownTimeout: 15 * time.Second,
+		DBHost:          getEnv("SHOP_DB_HOST", "localhost"),
+		DBPort:          getEnv("SHOP_DB_PORT", "5432"),
+		DBName:          getEnv("SHOP_DB_NAME", "shop_db"),
+		DBUser:          getEnv("SHOP_DB_USER", "shop_user"),
+		DBPassword:      getEnv("SHOP_DB_PASSWORD", "shop_password"),
+		AdminKey:        getEnv("SHOP_ADMIN_KEY", ""),
 	}
 
 	if v := os.Getenv("SHOP_SHUTDOWN_TIMEOUT_SECONDS"); v != "" {
