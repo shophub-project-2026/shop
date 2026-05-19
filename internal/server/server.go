@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/shophub-project-2026/shop/internal/config"
 	"github.com/shophub-project-2026/shop/internal/server/handlers"
 	"github.com/shophub-project-2026/shop/internal/server/middleware"
@@ -28,12 +29,14 @@ type Server struct {
 
 // New constructs a Server bound to cfg.HTTPAddr with all routes wired.
 // It does not start the listener -- call Run to do that.
-func New(cfg *config.Config, logger *slog.Logger) *Server {
+func New(cfg *config.Config, logger *slog.Logger, pool *pgxpool.Pool) *Server {
 	health := handlers.NewHealth()
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", health.Live)
 	mux.HandleFunc("GET /readyz", health.Ready)
+
+	_ = pool // handlers added in Sprint A2+
 
 	// Logging is applied at the outermost layer so probe traffic is
 	// captured alongside business endpoints. If probes become noisy in

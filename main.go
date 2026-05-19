@@ -8,14 +8,12 @@ import (
 	"syscall"
 
 	"github.com/shophub-project-2026/shop/internal/config"
+	"github.com/shophub-project-2026/shop/internal/db"
 	"github.com/shophub-project-2026/shop/internal/server"
 )
 
 func main() {
 	if err := run(); err != nil {
-		// run() handles its own logging where possible. This is the last
-		// line of defence -- print to stderr and exit non-zero so the
-		// process supervisor (Kubernetes) sees the failure.
 		_, _ = os.Stderr.WriteString("fatal: " + err.Error() + "\n")
 		os.Exit(1)
 	}
@@ -37,13 +35,22 @@ func run() error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	srv := server.New(cfg, logger)
+	pool, err := db.Open(ctx, cfg)
+	if err != nil {
+		return err
+	}
+	defer pool.Close()
+
+	logger.Info("running database migrations")
+	if err := db.RunMigrations(ctx, pool, db.Migrations, "migrations"); err != nil {
+		return err
+	}
+	logger.Info("migrations applied")
+
+	srv := server.New(cfg, logger, pool)
 	return srv.Run(ctx)
 }
 
-// newLogger returns a slog.Logger whose format and level are derived
-// from cfg. Text handler in development for human-readable output;
-// JSON handler elsewhere so log aggregators can parse fields.
 func newLogger(cfg *config.Config) *slog.Logger {
 	level := slog.LevelInfo
 	switch cfg.LogLevel {
