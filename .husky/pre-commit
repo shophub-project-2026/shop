@@ -1,2 +1,16 @@
+set -e
+
+# Ensure go-installed binaries (e.g. golangci-lint) are reachable even
+# if the user has not added $GOPATH/bin to their system PATH.
+export PATH="$(go env GOPATH)/bin:$PATH"
+
 go vet ./...
 go build ./...
+
+if ! command -v golangci-lint >/dev/null 2>&1; then
+  echo "pre-commit: golangci-lint not found on PATH"
+  echo "install with: go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.0.0"
+  exit 1
+fi
+
+golangci-lint run --timeout=5m ./...

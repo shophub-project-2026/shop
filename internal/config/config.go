@@ -54,20 +54,20 @@ func Load() (*Config, error) {
 
 func (c *Config) validate() error {
 	if c.HTTPAddr == "" {
-		return errors.New("HTTPAddr must not be empty")
+		return errors.New("http address must not be empty")
 	}
 	switch c.Environment {
 	case "development", "staging", "production":
 	default:
-		return fmt.Errorf("Environment %q must be one of development|staging|production", c.Environment)
+		return fmt.Errorf("environment %q must be one of development|staging|production", c.Environment)
 	}
 	switch c.LogLevel {
 	case "debug", "info", "warn", "error":
 	default:
-		return fmt.Errorf("LogLevel %q must be one of debug|info|warn|error", c.LogLevel)
+		return fmt.Errorf("log level %q must be one of debug|info|warn|error", c.LogLevel)
 	}
 	if c.ShutdownTimeout <= 0 {
-		return fmt.Errorf("ShutdownTimeout must be positive, got %s", c.ShutdownTimeout)
+		return fmt.Errorf("shutdown timeout must be positive, got %s", c.ShutdownTimeout)
 	}
 	return nil
 }
