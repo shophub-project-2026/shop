@@ -137,7 +137,10 @@ func (h *Handler) articleDetail(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
-	h.render(w, "customer/article_detail.html", map[string]any{"Article": a})
+	h.render(w, "customer/article_detail.html", map[string]any{
+		"Article": a,
+		"Err":     r.URL.Query().Get("err"),
+	})
 }
 
 func (h *Handler) cartAdd(w http.ResponseWriter, r *http.Request) {
