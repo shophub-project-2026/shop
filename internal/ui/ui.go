@@ -102,6 +102,9 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /checkout", h.checkout)
 
 	// admin
+	mux.HandleFunc("GET /admin/login", h.adminLoginPage)
+	mux.HandleFunc("POST /admin/login", h.adminLoginSubmit)
+	mux.HandleFunc("POST /admin/logout", h.adminLogout)
 	mux.HandleFunc("GET /admin/articles", h.adminArticles)
 	mux.HandleFunc("GET /admin/articles/new", h.adminArticleNew)
 	mux.HandleFunc("POST /admin/articles/new", h.adminArticleCreate)
@@ -120,7 +123,7 @@ func (h *Handler) articleList(w http.ResponseWriter, r *http.Request) {
 		h.serverError(w, err)
 		return
 	}
-	h.render(w, "customer/articles.html", map[string]any{
+	h.renderWithRequest(w, r, "customer/articles.html", map[string]any{
 		"Articles": list,
 		"Search":   search,
 	})
@@ -137,7 +140,7 @@ func (h *Handler) articleDetail(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
-	h.render(w, "customer/article_detail.html", map[string]any{
+	h.renderWithRequest(w, r, "customer/article_detail.html", map[string]any{
 		"Article": a,
 		"Err":     r.URL.Query().Get("err"),
 	})
@@ -198,7 +201,7 @@ func isValidWallet(s string) bool {
 func (h *Handler) cartView(w http.ResponseWriter, r *http.Request) {
 	wallet := r.URL.Query().Get("wallet")
 	c := h.cartStore.Get(wallet)
-	h.render(w, "customer/cart.html", map[string]any{
+	h.renderWithRequest(w, r, "customer/cart.html", map[string]any{
 		"Items":  c.Items,
 		"Wallet": wallet,
 	})
@@ -255,7 +258,7 @@ func (h *Handler) checkout(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	h.render(w, "customer/checkout.html", data)
+	h.renderWithRequest(w, r, "customer/checkout.html", data)
 }
 
 // ── admin handlers ─────────────────────────────────────────────────────────
@@ -269,7 +272,7 @@ func (h *Handler) adminArticles(w http.ResponseWriter, r *http.Request) {
 		h.serverError(w, err)
 		return
 	}
-	h.render(w, "admin/articles.html", map[string]any{
+	h.renderWithRequest(w, r, "admin/articles.html", map[string]any{
 		"Articles": list,
 		"Flash":    r.URL.Query().Get("flash"),
 	})
@@ -279,7 +282,7 @@ func (h *Handler) adminArticleNew(w http.ResponseWriter, r *http.Request) {
 	if !h.checkAdmin(w, r) {
 		return
 	}
-	h.render(w, "admin/article_form.html", map[string]any{
+	h.renderWithRequest(w, r, "admin/article_form.html", map[string]any{
 		"IsEdit":  false,
 		"Article": articles.Article{},
 	})
@@ -295,7 +298,7 @@ func (h *Handler) adminArticleCreate(w http.ResponseWriter, r *http.Request) {
 	qty, _ := strconv.Atoi(r.FormValue("quantity"))
 
 	if name == "" || price <= 0 {
-		h.render(w, "admin/article_form.html", map[string]any{
+		h.renderWithRequest(w, r, "admin/article_form.html", map[string]any{
 			"IsEdit":  false,
 			"Article": articles.Article{Name: name, Price: price, Quantity: qty},
 			"Error":   "Name and a positive price are required.",
@@ -323,7 +326,7 @@ func (h *Handler) adminArticleEdit(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
-	h.render(w, "admin/article_form.html", map[string]any{"IsEdit": true, "Article": a})
+	h.renderWithRequest(w, r, "admin/article_form.html", map[string]any{"IsEdit": true, "Article": a})
 }
 
 func (h *Handler) adminArticleUpdate(w http.ResponseWriter, r *http.Request) {
@@ -378,7 +381,7 @@ func (h *Handler) adminOrders(w http.ResponseWriter, r *http.Request) {
 	if list == nil {
 		list = []orders.Order{}
 	}
-	h.render(w, "admin/orders.html", map[string]any{
+	h.renderWithRequest(w, r, "admin/orders.html", map[string]any{
 		"Orders":     list,
 		"Total":      total,
 		"HasPrev":    offset > 0,
@@ -388,32 +391,97 @@ func (h *Handler) adminOrders(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// ── admin auth (browser cookie flow) ───────────────────────────────────────
+
+const adminCookieName = "shop_admin"
+
+func (h *Handler) adminLoginPage(w http.ResponseWriter, r *http.Request) {
+	h.renderWithRequest(w, r, "admin/login.html", map[string]any{
+		"Error": r.URL.Query().Get("err"),
+	})
+}
+
+func (h *Handler) adminLoginSubmit(w http.ResponseWriter, r *http.Request) {
+	_ = r.ParseForm()
+	key := strings.TrimSpace(r.FormValue("admin_key"))
+	if h.adminKey == "" || key != h.adminKey {
+		http.Redirect(w, r, "/admin/login?err=Invalid+admin+key", http.StatusSeeOther)
+		return
+	}
+	http.SetCookie(w, &http.Cookie{
+		Name:     adminCookieName,
+		Value:    key,
+		Path:     "/",
+		HttpOnly: true,
+		SameSite: http.SameSiteLaxMode,
+		MaxAge:   8 * 60 * 60, // 8 hours
+	})
+	http.Redirect(w, r, "/admin/articles", http.StatusSeeOther)
+}
+
+func (h *Handler) adminLogout(w http.ResponseWriter, r *http.Request) {
+	http.SetCookie(w, &http.Cookie{
+		Name:     adminCookieName,
+		Value:    "",
+		Path:     "/",
+		HttpOnly: true,
+		SameSite: http.SameSiteLaxMode,
+		MaxAge:   -1,
+	})
+	http.Redirect(w, r, "/admin/login", http.StatusSeeOther)
+}
+
 // ── helpers ────────────────────────────────────────────────────────────────
 
 func (h *Handler) checkAdmin(w http.ResponseWriter, r *http.Request) bool {
 	if h.adminKey == "" {
 		return true
 	}
-	// Accept key from cookie (browser) or header (API)
-	key := r.Header.Get("X-Admin-Key")
-	if key == "" {
-		if c, err := r.Cookie("admin_key"); err == nil {
-			key = c.Value
-		}
+	// API clients can use X-Admin-Key, browsers use the admin cookie.
+	if r.Header.Get("X-Admin-Key") == h.adminKey {
+		return true
 	}
-	if key != h.adminKey {
+	if c, err := r.Cookie(adminCookieName); err == nil && c.Value == h.adminKey {
+		return true
+	}
+	// JSON clients get a 401, browsers get redirected to the login page.
+	if strings.Contains(r.Header.Get("Accept"), "application/json") {
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
 		return false
 	}
-	return true
+	http.Redirect(w, r, "/admin/login", http.StatusSeeOther)
+	return false
 }
 
-func (h *Handler) render(w http.ResponseWriter, name string, data any) {
+func (h *Handler) renderWithRequest(w http.ResponseWriter, r *http.Request, name string, data any) {
 	tmpl := parse(name)
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	if err := tmpl.Execute(w, data); err != nil {
+	// Inject IsAdmin so layout can show/hide admin chrome.
+	m, ok := data.(map[string]any)
+	if !ok {
+		m = map[string]any{"_": data}
+	}
+	if _, set := m["IsAdmin"]; !set {
+		m["IsAdmin"] = r != nil && h.isAdminRequest(r)
+	}
+	if err := tmpl.Execute(w, m); err != nil {
 		h.logger.Error("render template", "name", name, "err", err)
 	}
+}
+
+// isAdminRequest returns true if the request carries a valid admin credential.
+// Unlike checkAdmin, it never writes to the response.
+func (h *Handler) isAdminRequest(r *http.Request) bool {
+	if h.adminKey == "" {
+		return true
+	}
+	if r.Header.Get("X-Admin-Key") == h.adminKey {
+		return true
+	}
+	if c, err := r.Cookie(adminCookieName); err == nil && c.Value == h.adminKey {
+		return true
+	}
+	return false
 }
 
 func (h *Handler) serverError(w http.ResponseWriter, err error) {
