@@ -33,6 +33,10 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux, adminMW func(http.Handler) 
 
 func (h *Handler) list(w http.ResponseWriter, r *http.Request) {
 	search := r.URL.Query().Get("search")
+	if len(search) > MaxSearchLength {
+		writeError(w, http.StatusBadRequest, "search query too long")
+		return
+	}
 	articles, err := h.repo.List(r.Context(), search)
 	if err != nil {
 		h.internalError(w, "list articles", err)
@@ -66,16 +70,8 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
 	if !decodeJSON(w, r, &in) {
 		return
 	}
-	if in.Name == "" {
-		writeError(w, http.StatusBadRequest, "name is required")
-		return
-	}
-	if in.Quantity < 0 {
-		writeError(w, http.StatusBadRequest, "quantity must be >= 0")
-		return
-	}
-	if in.Price <= 0 {
-		writeError(w, http.StatusBadRequest, "price must be > 0")
+	if err := in.Validate(); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 	article, err := h.repo.Create(r.Context(), in)
@@ -93,6 +89,10 @@ func (h *Handler) update(w http.ResponseWriter, r *http.Request) {
 	}
 	var in UpdateInput
 	if !decodeJSON(w, r, &in) {
+		return
+	}
+	if err := in.Validate(); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 	article, err := h.repo.Update(r.Context(), id, in)
@@ -136,7 +136,9 @@ func parseUUID(w http.ResponseWriter, s string) (uuid.UUID, bool) {
 }
 
 func decodeJSON(w http.ResponseWriter, r *http.Request, v any) bool {
-	if err := json.NewDecoder(r.Body).Decode(v); err != nil {
+	dec := json.NewDecoder(r.Body)
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(v); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid JSON body")
 		return false
 	}

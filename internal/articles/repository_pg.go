@@ -4,11 +4,19 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
+
+// escapeLike escapes the SQL LIKE/ILIKE wildcard chars %, _ and \
+// so user input is treated as a literal substring, not a pattern.
+func escapeLike(s string) string {
+	r := strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`)
+	return r.Replace(s)
+}
 
 // ErrNotFound is returned when an article does not exist.
 var ErrNotFound = errors.New("article not found")
@@ -30,9 +38,9 @@ func (r *pgRepository) List(ctx context.Context, search string) ([]Article, erro
 		rows, err = r.pool.Query(ctx,
 			`SELECT id, name, quantity, price, created_at, updated_at
 			 FROM articles
-			 WHERE name ILIKE $1
+			 WHERE name ILIKE $1 ESCAPE '\'
 			 ORDER BY created_at DESC`,
-			"%"+search+"%",
+			"%"+escapeLike(search)+"%",
 		)
 	} else {
 		rows, err = r.pool.Query(ctx,
