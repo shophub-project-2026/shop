@@ -51,6 +51,9 @@ func New(cfg *config.Config, logger *slog.Logger, pool *pgxpool.Pool, ethClient 
 	articles.NewHandler(articleRepo, logger).RegisterRoutes(mux, adminMW)
 
 	cartStore := cart.NewStore()
+	cartStore.SetSizeObserver(func(activeCarts int) {
+		shopmetrics.ActiveCarts.Set(float64(activeCarts))
+	})
 	cart.NewHandler(cartStore, logger).RegisterRoutes(mux)
 
 	baseOrderRepo := orders.NewPGRepository(pool)
