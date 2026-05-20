@@ -15,6 +15,7 @@
       <tr>
         <th class="text-left px-4 py-3 text-gray-600">ID</th>
         <th class="text-left px-4 py-3 text-gray-600">Wallet</th>
+        <th class="text-right px-4 py-3 text-gray-600">Items</th>
         <th class="text-right px-4 py-3 text-gray-600">Total</th>
         <th class="text-center px-4 py-3 text-gray-600">Status</th>
         <th class="text-right px-4 py-3 text-gray-600">Created</th>
@@ -25,6 +26,7 @@
       <tr class="border-b border-gray-100 last:border-0 hover:bg-gray-50">
         <td class="px-4 py-3 text-gray-500 font-mono text-xs">{{slice (.ID.String) 0 8}}…</td>
         <td class="px-4 py-3 text-gray-700 font-mono text-xs">{{.WalletAddress}}</td>
+        <td class="px-4 py-3 text-right text-gray-700">{{len .Items}}</td>
         <td class="px-4 py-3 text-right text-gray-700">${{printf "%.2f" .TotalAmount}}</td>
         <td class="px-4 py-3 text-center">
           {{if eq .Status "paid"}}

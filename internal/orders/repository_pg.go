@@ -78,12 +78,20 @@ func (r *pgRepository) Create(ctx context.Context, in CreateInput) (*Order, erro
 }
 
 func (r *pgRepository) List(ctx context.Context, limit, offset int) ([]Order, int, error) {
+	// Use a snapshot transaction so the count and the page belong to the
+	// same point-in-time view of the orders table.
+	tx, err := r.pool.BeginTx(ctx, pgx.TxOptions{AccessMode: pgx.ReadOnly})
+	if err != nil {
+		return nil, 0, fmt.Errorf("begin tx: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
 	var total int
-	if err := r.pool.QueryRow(ctx, `SELECT COUNT(*) FROM orders`).Scan(&total); err != nil {
+	if err := tx.QueryRow(ctx, `SELECT COUNT(*) FROM orders`).Scan(&total); err != nil {
 		return nil, 0, fmt.Errorf("count orders: %w", err)
 	}
 
-	rows, err := r.pool.Query(ctx,
+	rows, err := tx.Query(ctx,
 		`SELECT id, wallet_address, total_amount, tx_hash, status, created_at
 		 FROM orders ORDER BY created_at DESC LIMIT $1 OFFSET $2`,
 		limit, offset,
@@ -91,17 +99,56 @@ func (r *pgRepository) List(ctx context.Context, limit, offset int) ([]Order, in
 	if err != nil {
 		return nil, 0, fmt.Errorf("list orders: %w", err)
 	}
-	defer rows.Close()
 
-	var result []Order
+	var (
+		result []Order
+		ids    []uuid.UUID
+	)
 	for rows.Next() {
 		var o Order
 		if err := rows.Scan(&o.ID, &o.WalletAddress, &o.TotalAmount, &o.TxHash, &o.Status, &o.CreatedAt); err != nil {
+			rows.Close()
 			return nil, 0, fmt.Errorf("scan order: %w", err)
 		}
 		result = append(result, o)
+		ids = append(ids, o.ID)
 	}
-	return result, total, rows.Err()
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return nil, 0, err
+	}
+
+	if len(ids) > 0 {
+		itemRows, err := tx.Query(ctx,
+			`SELECT id, order_id, article_id, quantity, unit_price
+			 FROM order_items WHERE order_id = ANY($1)`,
+			ids,
+		)
+		if err != nil {
+			return nil, 0, fmt.Errorf("list order_items: %w", err)
+		}
+		byOrder := make(map[uuid.UUID][]OrderItem, len(result))
+		for itemRows.Next() {
+			var item OrderItem
+			if err := itemRows.Scan(&item.ID, &item.OrderID, &item.ArticleID, &item.Quantity, &item.UnitPrice); err != nil {
+				itemRows.Close()
+				return nil, 0, fmt.Errorf("scan order_item: %w", err)
+			}
+			byOrder[item.OrderID] = append(byOrder[item.OrderID], item)
+		}
+		itemRows.Close()
+		if err := itemRows.Err(); err != nil {
+			return nil, 0, err
+		}
+		for i := range result {
+			result[i].Items = byOrder[result[i].ID]
+		}
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return nil, 0, fmt.Errorf("commit list tx: %w", err)
+	}
+	return result, total, nil
 }
 
 func (r *pgRepository) Get(ctx context.Context, id uuid.UUID) (*Order, error) {
