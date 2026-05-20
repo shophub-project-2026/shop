@@ -41,6 +41,19 @@ func (s *Store) Add(wallet string, articleID uuid.UUID, quantity int) {
 	s.data[wallet][articleID] += quantity
 }
 
+// Len returns the number of non-empty carts currently in the store.
+func (s *Store) Len() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	count := 0
+	for _, items := range s.data {
+		if len(items) > 0 {
+			count++
+		}
+	}
+	return count
+}
+
 // Get returns the current cart for wallet.
 func (s *Store) Get(wallet string) Cart {
 	s.mu.Lock()
