@@ -1,0 +1,33 @@
+{{template "layout.html" .}}
+{{define "title"}}{{.Article.Name}}{{end}}
+{{define "content"}}
+<div class="bg-white rounded-lg shadow-sm border border-gray-200 p-8 max-w-lg">
+  <a href="/" class="text-sm text-indigo-600 hover:underline mb-4 inline-block">← Back to articles</a>
+  <h1 class="text-2xl font-bold text-gray-800 mb-2">{{.Article.Name}}</h1>
+  <p class="text-3xl font-bold text-indigo-600 mb-2">${{printf "%.2f" .Article.Price}}</p>
+  <p class="text-gray-500 mb-6">{{.Article.Quantity}} in stock</p>
+
+  {{if .Flash}}
+    <div class="mb-4 p-3 rounded bg-green-50 text-green-700 text-sm border border-green-200">{{.Flash}}</div>
+  {{end}}
+
+  {{if gt .Article.Quantity 0}}
+  <form method="POST" action="/cart">
+    <input type="hidden" name="article_id" value="{{.Article.ID}}">
+    <div class="flex items-center gap-3 mb-4">
+      <label class="text-sm text-gray-600">Qty:</label>
+      <input type="number" name="quantity" value="1" min="1" max="{{.Article.Quantity}}"
+             class="w-20 border border-gray-300 rounded px-2 py-1 text-sm">
+      <input type="hidden" name="wallet_address" id="walletInput" value="">
+    </div>
+    <button type="submit"
+            class="w-full bg-indigo-600 text-white py-2 rounded hover:bg-indigo-700 text-sm font-medium">
+      Add to cart
+    </button>
+  </form>
+  <p class="text-xs text-gray-400 mt-2">A wallet address is required — connect MetaMask on the checkout page.</p>
+  {{else}}
+  <p class="text-red-500 font-medium">Out of stock</p>
+  {{end}}
+</div>
+{{end}}

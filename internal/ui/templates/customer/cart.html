@@ -1,0 +1,57 @@
+{{template "layout.html" .}}
+{{define "title"}}Cart{{end}}
+{{define "content"}}
+<h1 class="text-2xl font-bold text-gray-800 mb-6">Your Cart</h1>
+
+<div class="mb-4 flex items-center gap-3">
+  <label class="text-sm text-gray-600 font-medium">Wallet address:</label>
+  <input type="text" id="walletAddr" placeholder="0x…"
+         class="flex-1 border border-gray-300 rounded px-3 py-1.5 text-sm font-mono"
+         value="{{.Wallet}}">
+  <button onclick="loadCart()" class="bg-indigo-600 text-white px-3 py-1.5 rounded text-sm hover:bg-indigo-700">Load cart</button>
+</div>
+
+<div id="cartContents">
+  {{if not .Items}}
+    <p class="text-gray-500">Cart is empty.</p>
+  {{else}}
+  <div class="bg-white rounded-lg shadow-sm border border-gray-200 overflow-hidden mb-6">
+    <table class="w-full text-sm">
+      <thead class="bg-gray-50 border-b border-gray-200">
+        <tr>
+          <th class="text-left px-4 py-3 text-gray-600">Article</th>
+          <th class="text-right px-4 py-3 text-gray-600">Qty</th>
+          <th class="text-right px-4 py-3 text-gray-600"></th>
+        </tr>
+      </thead>
+      <tbody>
+        {{range .Items}}
+        <tr class="border-b border-gray-100 last:border-0">
+          <td class="px-4 py-3 text-gray-800">{{.ArticleID}}</td>
+          <td class="px-4 py-3 text-right text-gray-600">{{.Quantity}}</td>
+          <td class="px-4 py-3 text-right">
+            <form method="POST" action="/cart/remove" class="inline">
+              <input type="hidden" name="article_id" value="{{.ArticleID}}">
+              <input type="hidden" name="wallet_address" id="removeWallet_{{.ArticleID}}" value="{{$.Wallet}}">
+              <button type="submit" class="text-red-500 hover:text-red-700 text-xs">Remove</button>
+            </form>
+          </td>
+        </tr>
+        {{end}}
+      </tbody>
+    </table>
+  </div>
+  <a href="/checkout?wallet={{.Wallet}}"
+     class="inline-block bg-indigo-600 text-white px-6 py-2 rounded hover:bg-indigo-700 font-medium">
+    Checkout
+  </a>
+  {{end}}
+</div>
+
+<script>
+function loadCart() {
+  const w = document.getElementById('walletAddr').value.trim();
+  if (w) window.location.href = '/cart?wallet=' + encodeURIComponent(w);
+}
+</script>
+{{end}}
