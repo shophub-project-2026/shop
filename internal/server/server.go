@@ -35,7 +35,7 @@ type Server struct {
 // New constructs a Server bound to cfg.HTTPAddr with all routes wired.
 // ethClient may be nil — payment endpoints are disabled when no RPC is configured.
 func New(cfg *config.Config, logger *slog.Logger, pool *pgxpool.Pool, ethClient payment.EthClient) *Server {
-	health := handlers.NewHealth()
+	health := handlers.NewHealth(pool)
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", health.Live)
