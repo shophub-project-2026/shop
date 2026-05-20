@@ -1,0 +1,128 @@
+{{template "layout.html" .}}
+{{define "title"}}Checkout{{end}}
+{{define "content"}}
+<div class="max-w-lg">
+  <h1 class="text-2xl font-bold text-gray-800 mb-6">Checkout</h1>
+
+  {{if .Error}}
+  <div class="mb-4 p-3 rounded bg-red-50 text-red-700 text-sm border border-red-200">{{.Error}}</div>
+  {{end}}
+  {{if .Success}}
+  <div class="mb-4 p-3 rounded bg-green-50 text-green-700 text-sm border border-green-200">
+    Payment verified! Order <strong>{{.OrderID}}</strong> is now paid.
+  </div>
+  {{end}}
+
+  <div class="bg-white rounded-lg shadow-sm border border-gray-200 p-6 mb-6">
+    <h2 class="font-semibold text-gray-700 mb-4">Order Summary</h2>
+    <div class="flex justify-between text-sm mb-1">
+      <span class="text-gray-600">Total (USD)</span>
+      <span class="font-medium">${{printf "%.2f" .TotalUSD}}</span>
+    </div>
+    <div class="flex justify-between text-sm mb-1">
+      <span class="text-gray-600">ETH rate</span>
+      <span class="font-medium">1 ETH = ${{printf "%.2f" .EthPriceUSD}}</span>
+    </div>
+    <div class="flex justify-between text-sm font-bold mt-3 pt-3 border-t border-gray-200">
+      <span>Pay in ETH</span>
+      <span class="text-indigo-600">{{printf "%.8f" .EthAmount}} ETH</span>
+    </div>
+    <p class="text-xs text-gray-400 mt-2">Send to: <span class="font-mono">{{.RecipientAddr}}</span></p>
+  </div>
+
+  <div class="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
+    <h2 class="font-semibold text-gray-700 mb-4">Pay with MetaMask</h2>
+    <p class="text-sm text-gray-500 mb-4">Connect your MetaMask wallet and send the exact ETH amount to complete the purchase.</p>
+
+    <button id="connectBtn" onclick="connectAndPay()"
+            class="w-full bg-orange-500 text-white py-2 rounded hover:bg-orange-600 font-medium mb-3">
+      Connect MetaMask &amp; Pay
+    </button>
+
+    <div id="txSection" class="hidden">
+      <p class="text-sm text-gray-600 mb-2">Transaction sent! Enter the tx hash to confirm:</p>
+      <input type="text" id="txHash" placeholder="0x…"
+             class="w-full border border-gray-300 rounded px-3 py-2 text-sm font-mono mb-3">
+      <button onclick="verifyPayment()"
+              class="w-full bg-indigo-600 text-white py-2 rounded hover:bg-indigo-700 font-medium">
+        Verify Payment
+      </button>
+    </div>
+    <div id="statusMsg" class="text-sm mt-3"></div>
+  </div>
+</div>
+
+<script src="https://cdn.ethers.io/lib/ethers-5.7.2.umd.min.js" type="text/javascript"></script>
+<script>
+const ORDER_ID    = "{{.OrderID}}";
+const ETH_AMOUNT  = "{{printf `%.8f` .EthAmount}}";
+const RECIPIENT   = "{{.RecipientAddr}}";
+
+async function connectAndPay() {
+  const statusEl = document.getElementById('statusMsg');
+  if (!window.ethereum) {
+    statusEl.textContent = 'MetaMask not detected. Please install it.';
+    statusEl.className = 'text-sm mt-3 text-red-600';
+    return;
+  }
+  try {
+    statusEl.textContent = 'Connecting…';
+    await window.ethereum.request({ method: 'eth_requestAccounts' });
+    const provider = new ethers.providers.Web3Provider(window.ethereum);
+    const signer   = provider.getSigner();
+
+    // Switch to Sepolia (chainId 11155111)
+    try {
+      await window.ethereum.request({
+        method: 'wallet_switchEthereumChain',
+        params: [{ chainId: '0xaa36a7' }],
+      });
+    } catch (e) {
+      statusEl.textContent = 'Please switch MetaMask to Sepolia testnet.';
+      statusEl.className = 'text-sm mt-3 text-red-600';
+      return;
+    }
+
+    statusEl.textContent = 'Sending transaction…';
+    const tx = await signer.sendTransaction({
+      to:    RECIPIENT,
+      value: ethers.utils.parseEther(ETH_AMOUNT),
+    });
+    statusEl.textContent = 'Transaction sent: ' + tx.hash;
+    statusEl.className   = 'text-sm mt-3 text-green-600';
+    document.getElementById('txHash').value = tx.hash;
+    document.getElementById('txSection').classList.remove('hidden');
+  } catch (err) {
+    statusEl.textContent = 'Error: ' + (err.message || err);
+    statusEl.className   = 'text-sm mt-3 text-red-600';
+  }
+}
+
+async function verifyPayment() {
+  const hash    = document.getElementById('txHash').value.trim();
+  const statusEl = document.getElementById('statusMsg');
+  if (!hash) { statusEl.textContent = 'Enter a tx hash.'; return; }
+
+  statusEl.textContent = 'Verifying…';
+  try {
+    const res = await fetch('/payment/verify', {
+      method:  'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body:    JSON.stringify({ order_id: ORDER_ID, tx_hash: hash }),
+    });
+    const data = await res.json();
+    if (!res.ok) {
+      statusEl.textContent = 'Verification failed: ' + (data.error || res.status);
+      statusEl.className   = 'text-sm mt-3 text-red-600';
+    } else {
+      statusEl.textContent = 'Payment confirmed! Order is now paid.';
+      statusEl.className   = 'text-sm mt-3 text-green-600';
+      setTimeout(() => window.location.href = '/', 2000);
+    }
+  } catch (err) {
+    statusEl.textContent = 'Network error: ' + err.message;
+    statusEl.className   = 'text-sm mt-3 text-red-600';
+  }
+}
+</script>
+{{end}}

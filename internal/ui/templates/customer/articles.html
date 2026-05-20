@@ -1,0 +1,28 @@
+{{template "layout.html" .}}
+{{define "title"}}Articles{{end}}
+{{define "content"}}
+<div class="mb-6">
+  <form method="GET" action="/" class="flex gap-2">
+    <input type="text" name="search" value="{{.Search}}"
+           placeholder="Search articles…"
+           class="flex-1 border border-gray-300 rounded px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400">
+    <button type="submit" class="bg-indigo-600 text-white px-4 py-2 rounded text-sm hover:bg-indigo-700">Search</button>
+    {{if .Search}}<a href="/" class="px-4 py-2 text-sm text-gray-500 hover:text-gray-700">Clear</a>{{end}}
+  </form>
+</div>
+
+{{if not .Articles}}
+  <p class="text-gray-500">No articles found.</p>
+{{else}}
+<div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
+  {{range .Articles}}
+  <div class="bg-white rounded-lg shadow-sm border border-gray-200 p-5 flex flex-col gap-3">
+    <h2 class="font-semibold text-gray-800 text-lg">{{.Name}}</h2>
+    <p class="text-indigo-600 font-bold text-xl">${{printf "%.2f" .Price}}</p>
+    <p class="text-sm text-gray-500">{{.Quantity}} in stock</p>
+    <a href="/articles/{{.ID}}" class="mt-auto block text-center bg-indigo-50 text-indigo-700 border border-indigo-200 rounded py-2 text-sm hover:bg-indigo-100">View details</a>
+  </div>
+  {{end}}
+</div>
+{{end}}
+{{end}}

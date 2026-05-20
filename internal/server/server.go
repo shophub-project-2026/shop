@@ -19,6 +19,7 @@ import (
 	"github.com/shophub-project-2026/shop/internal/payment"
 	"github.com/shophub-project-2026/shop/internal/server/handlers"
 	"github.com/shophub-project-2026/shop/internal/server/middleware"
+	"github.com/shophub-project-2026/shop/internal/ui"
 )
 
 // Server is the top-level HTTP server for the Shop service.
@@ -53,6 +54,9 @@ func New(cfg *config.Config, logger *slog.Logger, pool *pgxpool.Pool, ethClient 
 		payment.NewHandler(orderRepo, cartStore, ethClient, cfg.EthWallet, cfg.EthPriceUSD, logger).
 			RegisterRoutes(mux)
 	}
+
+	ui.NewHandler(articleRepo, orderRepo, cartStore, cfg.AdminKey, cfg.EthWallet, cfg.EthPriceUSD, logger).
+		RegisterRoutes(mux)
 
 	handler := middleware.Logging(logger)(mux)
 

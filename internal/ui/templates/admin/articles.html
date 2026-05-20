@@ -1,0 +1,45 @@
+{{template "layout.html" .}}
+{{define "title"}}Admin — Articles{{end}}
+{{define "content"}}
+<div class="flex items-center justify-between mb-6">
+  <h1 class="text-2xl font-bold text-gray-800">Articles</h1>
+  <a href="/admin/articles/new" class="bg-indigo-600 text-white px-4 py-2 rounded text-sm hover:bg-indigo-700">+ New article</a>
+</div>
+
+{{if .Flash}}
+<div class="mb-4 p-3 rounded bg-green-50 text-green-700 text-sm border border-green-200">{{.Flash}}</div>
+{{end}}
+
+{{if not .Articles}}
+  <p class="text-gray-500">No articles yet.</p>
+{{else}}
+<div class="bg-white rounded-lg shadow-sm border border-gray-200 overflow-hidden">
+  <table class="w-full text-sm">
+    <thead class="bg-gray-50 border-b border-gray-200">
+      <tr>
+        <th class="text-left px-4 py-3 text-gray-600">Name</th>
+        <th class="text-right px-4 py-3 text-gray-600">Price</th>
+        <th class="text-right px-4 py-3 text-gray-600">Stock</th>
+        <th class="text-right px-4 py-3 text-gray-600">Actions</th>
+      </tr>
+    </thead>
+    <tbody>
+      {{range .Articles}}
+      <tr class="border-b border-gray-100 last:border-0 hover:bg-gray-50">
+        <td class="px-4 py-3 text-gray-800">{{.Name}}</td>
+        <td class="px-4 py-3 text-right text-gray-600">${{printf "%.2f" .Price}}</td>
+        <td class="px-4 py-3 text-right text-gray-600">{{.Quantity}}</td>
+        <td class="px-4 py-3 text-right space-x-2">
+          <a href="/admin/articles/{{.ID}}/edit" class="text-indigo-600 hover:underline">Edit</a>
+          <form method="POST" action="/admin/articles/{{.ID}}/delete" class="inline">
+            <button type="submit" class="text-red-500 hover:underline"
+                    onclick="return confirm('Delete {{.Name}}?')">Delete</button>
+          </form>
+        </td>
+      </tr>
+      {{end}}
+    </tbody>
+  </table>
+</div>
+{{end}}
+{{end}}
