@@ -8,6 +8,7 @@ import (
 	"html/template"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 
@@ -100,6 +101,7 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /cart/remove", h.cartRemove)
 	mux.HandleFunc("GET /cart", h.cartView)
 	mux.HandleFunc("GET /checkout", h.checkout)
+	mux.HandleFunc("POST /checkout", h.checkoutCreate)
 
 	// admin
 	mux.HandleFunc("GET /admin/login", h.adminLoginPage)
@@ -207,58 +209,114 @@ func (h *Handler) cartView(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// checkout is the pure-GET checkout view. It either shows the user's
+// existing pending order, or — if there is none — shows the cart contents
+// with a "Place order" button that POSTs back to /checkout.
 func (h *Handler) checkout(w http.ResponseWriter, r *http.Request) {
-	wallet := r.URL.Query().Get("wallet")
-
-	data := map[string]any{
-		"EthPriceUSD":   h.ethPrice,
-		"RecipientAddr": h.ethWallet,
-	}
-
-	if o, err := h.orderRepo.FindPendingByWallet(r.Context(), wallet); err == nil {
-		data["OrderID"] = o.ID.String()
-		data["TotalUSD"] = o.TotalAmount
-		data["EthAmount"] = o.TotalAmount / h.ethPrice
-	} else if !errors.Is(err, orders.ErrNotFound) {
-		h.serverError(w, err)
+	wallet := strings.TrimSpace(r.URL.Query().Get("wallet"))
+	if !isValidWallet(wallet) {
+		http.Redirect(w, r, "/", http.StatusSeeOther)
 		return
 	}
 
-	// if no pending order, create one now from the cart
-	if _, ok := data["OrderID"]; !ok {
+	data := map[string]any{
+		"Wallet":        wallet,
+		"EthPriceUSD":   h.ethPrice,
+		"RecipientAddr": h.ethWallet,
+		"Error":         r.URL.Query().Get("err"),
+	}
+
+	o, err := h.orderRepo.FindPendingByWallet(r.Context(), wallet)
+	switch {
+	case err == nil:
+		// Existing pending order — show the pay-with-MetaMask section.
+		data["OrderID"] = o.ID.String()
+		data["TotalUSD"] = o.TotalAmount
+		data["EthAmount"] = o.TotalAmount / h.ethPrice
+	case errors.Is(err, orders.ErrNotFound):
+		// No pending order — preview the cart for confirmation.
 		cartData := h.cartStore.Get(wallet)
 		if len(cartData.Items) == 0 {
 			http.Redirect(w, r, "/cart?wallet="+wallet, http.StatusSeeOther)
 			return
 		}
-		input := orders.CreateInput{WalletAddress: wallet}
+		var preview []map[string]any
+		var total float64
 		for _, item := range cartData.Items {
-			a, err := h.articleRepo.Get(r.Context(), item.ArticleID)
-			if err != nil {
+			a, gerr := h.articleRepo.Get(r.Context(), item.ArticleID)
+			if gerr != nil {
 				continue
 			}
-			input.Items = append(input.Items, orders.ItemInput{
-				ArticleID: item.ArticleID,
-				Quantity:  item.Quantity,
-				UnitPrice: a.Price,
+			line := a.Price * float64(item.Quantity)
+			total += line
+			preview = append(preview, map[string]any{
+				"Name":      a.Name,
+				"Quantity":  item.Quantity,
+				"UnitPrice": a.Price,
+				"LineTotal": line,
 			})
 		}
-		if len(input.Items) == 0 {
-			http.Redirect(w, r, "/cart?wallet="+wallet, http.StatusSeeOther)
-			return
-		}
-		o, err := h.orderRepo.Create(r.Context(), input)
-		if err != nil {
-			data["Error"] = fmt.Sprintf("Could not create order: %v", err)
-		} else {
-			h.cartStore.Clear(wallet)
-			data["OrderID"] = o.ID.String()
-			data["TotalUSD"] = o.TotalAmount
-			data["EthAmount"] = o.TotalAmount / h.ethPrice
-		}
+		data["Preview"] = preview
+		data["TotalUSD"] = total
+		data["EthAmount"] = total / h.ethPrice
+	default:
+		h.serverError(w, err)
+		return
 	}
 
 	h.renderWithRequest(w, r, "customer/checkout.html", data)
+}
+
+// checkoutCreate handles the form POST that turns the cart into a pending order.
+// It is the *only* place where /checkout has a side effect.
+func (h *Handler) checkoutCreate(w http.ResponseWriter, r *http.Request) {
+	_ = r.ParseForm()
+	wallet := strings.TrimSpace(r.FormValue("wallet_address"))
+	if !isValidWallet(wallet) {
+		http.Redirect(w, r, "/", http.StatusSeeOther)
+		return
+	}
+
+	// If the customer already has a pending order, skip recreation (idempotent
+	// POST — protects against double-submit and accidental reload).
+	if _, err := h.orderRepo.FindPendingByWallet(r.Context(), wallet); err == nil {
+		http.Redirect(w, r, "/checkout?wallet="+wallet, http.StatusSeeOther)
+		return
+	} else if !errors.Is(err, orders.ErrNotFound) {
+		h.serverError(w, err)
+		return
+	}
+
+	cartData := h.cartStore.Get(wallet)
+	if len(cartData.Items) == 0 {
+		http.Redirect(w, r, "/cart?wallet="+wallet, http.StatusSeeOther)
+		return
+	}
+
+	input := orders.CreateInput{WalletAddress: wallet}
+	for _, item := range cartData.Items {
+		a, err := h.articleRepo.Get(r.Context(), item.ArticleID)
+		if err != nil {
+			continue
+		}
+		input.Items = append(input.Items, orders.ItemInput{
+			ArticleID: item.ArticleID,
+			Quantity:  item.Quantity,
+			UnitPrice: a.Price,
+		})
+	}
+	if len(input.Items) == 0 {
+		http.Redirect(w, r, "/cart?wallet="+wallet, http.StatusSeeOther)
+		return
+	}
+
+	if _, err := h.orderRepo.Create(r.Context(), input); err != nil {
+		msg := fmt.Sprintf("Could not create order: %v", err)
+		http.Redirect(w, r, "/checkout?wallet="+wallet+"&err="+url.QueryEscape(msg), http.StatusSeeOther)
+		return
+	}
+	h.cartStore.Clear(wallet)
+	http.Redirect(w, r, "/checkout?wallet="+wallet, http.StatusSeeOther)
 }
 
 // ── admin handlers ─────────────────────────────────────────────────────────
