@@ -7,11 +7,17 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 // ErrNotFound is returned when an order does not exist.
 var ErrNotFound = errors.New("order not found")
+
+// ErrTxHashReused is returned when UpdateStatus would assign a tx_hash that
+// is already linked to another order — i.e. someone is trying to settle a
+// second order with the same on-chain payment.
+var ErrTxHashReused = errors.New("tx_hash already used by another order")
 
 type pgRepository struct {
 	pool *pgxpool.Pool
@@ -209,6 +215,10 @@ func (r *pgRepository) UpdateStatus(ctx context.Context, id uuid.UUID, status st
 		status, txHash, id,
 	)
 	if err != nil {
+		var pgErr *pgconn.PgError
+		if errors.As(err, &pgErr) && pgErr.Code == pgUniqueViolation {
+			return ErrTxHashReused
+		}
 		return fmt.Errorf("update order status: %w", err)
 	}
 	if tag.RowsAffected() == 0 {

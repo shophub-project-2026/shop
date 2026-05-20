@@ -140,6 +140,10 @@ func (h *Handler) verify(w http.ResponseWriter, r *http.Request) {
 
 	txHashStr := req.TxHash
 	if err := h.orderRepo.UpdateStatus(r.Context(), orderID, orders.StatusPaid, &txHashStr); err != nil {
+		if errors.Is(err, orders.ErrTxHashReused) {
+			writeError(w, http.StatusConflict, "this transaction has already been used for another order")
+			return
+		}
 		h.internalError(w, "update order status", err)
 		return
 	}

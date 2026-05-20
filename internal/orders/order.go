@@ -16,6 +16,10 @@ const (
 	StatusFailed  = "failed"
 )
 
+// SQLSTATE 23505 — Postgres unique_violation. Used by the repository to
+// detect tx_hash collisions and to translate them into a stable domain error.
+const pgUniqueViolation = "23505"
+
 // Order is a purchase record created from a customer's cart.
 type Order struct {
 	ID            uuid.UUID   `json:"id"`
