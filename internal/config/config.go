@@ -36,6 +36,11 @@ type Config struct {
 
 	// Admin API key — required in X-Admin-Key header for write endpoints.
 	AdminKey string
+
+	// Ethereum / Sepolia testnet configuration.
+	EthRPCURL   string  // SHOP_ETH_RPC_URL
+	EthWallet   string  // SHOP_ETH_WALLET — recipient address for payments
+	EthPriceUSD float64 // SHOP_ETH_PRICE_USD — mock ETH/USD rate
 }
 
 // Load reads the configuration from environment variables, applies sane
@@ -52,6 +57,17 @@ func Load() (*Config, error) {
 		DBUser:          getEnv("SHOP_DB_USER", "shop_user"),
 		DBPassword:      getEnv("SHOP_DB_PASSWORD", "shop_password"),
 		AdminKey:        getEnv("SHOP_ADMIN_KEY", ""),
+		EthRPCURL:       getEnv("SHOP_ETH_RPC_URL", ""),
+		EthWallet:       getEnv("SHOP_ETH_WALLET", ""),
+		EthPriceUSD:     3000.0, // default mock rate; override with SHOP_ETH_PRICE_USD
+	}
+
+	if v := os.Getenv("SHOP_ETH_PRICE_USD"); v != "" {
+		price, err := strconv.ParseFloat(v, 64)
+		if err != nil || price <= 0 {
+			return nil, fmt.Errorf("SHOP_ETH_PRICE_USD must be a positive number")
+		}
+		cfg.EthPriceUSD = price
 	}
 
 	if v := os.Getenv("SHOP_SHUTDOWN_TIMEOUT_SECONDS"); v != "" {
