@@ -34,6 +34,13 @@ type Config struct {
 	DBUser     string
 	DBPassword string
 
+	// Database pool tuning. Defaults are conservative; override per-env.
+	DBMaxConns           int32
+	DBMinConns           int32
+	DBMaxConnLifetime    time.Duration
+	DBMaxConnIdleTime    time.Duration
+	DBHealthCheckPeriod  time.Duration
+
 	// Admin API key — required in X-Admin-Key header for write endpoints.
 	AdminKey string
 
@@ -60,6 +67,42 @@ func Load() (*Config, error) {
 		EthRPCURL:       getEnv("SHOP_ETH_RPC_URL", ""),
 		EthWallet:       getEnv("SHOP_ETH_WALLET", ""),
 		EthPriceUSD:     3000.0, // default mock rate; override with SHOP_ETH_PRICE_USD
+
+		DBMaxConns:          25,
+		DBMinConns:          2,
+		DBMaxConnLifetime:   30 * time.Minute,
+		DBMaxConnIdleTime:   5 * time.Minute,
+		DBHealthCheckPeriod: 1 * time.Minute,
+	}
+
+	for _, spec := range []struct {
+		name string
+		set  func(int) error
+	}{
+		{"SHOP_DB_MAX_CONNS", func(n int) error {
+			if n <= 0 {
+				return fmt.Errorf("SHOP_DB_MAX_CONNS must be > 0")
+			}
+			cfg.DBMaxConns = int32(n)
+			return nil
+		}},
+		{"SHOP_DB_MIN_CONNS", func(n int) error {
+			if n < 0 {
+				return fmt.Errorf("SHOP_DB_MIN_CONNS must be >= 0")
+			}
+			cfg.DBMinConns = int32(n)
+			return nil
+		}},
+	} {
+		if v := os.Getenv(spec.name); v != "" {
+			n, err := strconv.Atoi(v)
+			if err != nil {
+				return nil, fmt.Errorf("%s: %w", spec.name, err)
+			}
+			if err := spec.set(n); err != nil {
+				return nil, err
+			}
+		}
 	}
 
 	if v := os.Getenv("SHOP_ETH_PRICE_USD"); v != "" {
