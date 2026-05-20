@@ -12,9 +12,11 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/shophub-project-2026/shop/internal/articles"
 	"github.com/shophub-project-2026/shop/internal/cart"
 	"github.com/shophub-project-2026/shop/internal/config"
+	shopmetrics "github.com/shophub-project-2026/shop/internal/metrics"
 	"github.com/shophub-project-2026/shop/internal/orders"
 	"github.com/shophub-project-2026/shop/internal/payment"
 	"github.com/shophub-project-2026/shop/internal/server/handlers"
@@ -38,16 +40,21 @@ func New(cfg *config.Config, logger *slog.Logger, pool *pgxpool.Pool, ethClient 
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", health.Live)
 	mux.HandleFunc("GET /readyz", health.Ready)
+	mux.Handle("GET /metrics", promhttp.Handler())
 
 	adminMW := middleware.Admin(cfg.AdminKey)
 
-	articleRepo := articles.NewPGRepository(pool)
+	// Wrap repos with instrumentation so business metrics stay in sync.
+	baseArticleRepo := articles.NewPGRepository(pool)
+	articleRepo := shopmetrics.NewInstrumentedArticleRepo(context.Background(), baseArticleRepo)
+
 	articles.NewHandler(articleRepo, logger).RegisterRoutes(mux, adminMW)
 
 	cartStore := cart.NewStore()
 	cart.NewHandler(cartStore, logger).RegisterRoutes(mux)
 
-	orderRepo := orders.NewPGRepository(pool)
+	baseOrderRepo := orders.NewPGRepository(pool)
+	orderRepo := shopmetrics.NewInstrumentedOrderRepo(baseOrderRepo)
 	orders.NewHandler(orderRepo, cartStore, articleRepo, logger).RegisterRoutes(mux, adminMW)
 
 	if ethClient != nil {
@@ -58,7 +65,8 @@ func New(cfg *config.Config, logger *slog.Logger, pool *pgxpool.Pool, ethClient 
 	ui.NewHandler(articleRepo, orderRepo, cartStore, cfg.AdminKey, cfg.EthWallet, cfg.EthPriceUSD, logger).
 		RegisterRoutes(mux)
 
-	handler := middleware.Logging(logger)(mux)
+	// Metrics middleware wraps everything; logging is innermost to stay accurate.
+	handler := shopmetrics.Middleware(middleware.Logging(logger)(mux))
 
 	return &Server{
 		httpServer: &http.Server{
