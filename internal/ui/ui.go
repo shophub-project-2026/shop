@@ -152,8 +152,9 @@ func (h *Handler) cartAdd(w http.ResponseWriter, r *http.Request) {
 		qty = 1
 	}
 	wallet := strings.TrimSpace(r.FormValue("wallet_address"))
-	if wallet == "" {
-		wallet = "default"
+	if !isValidWallet(wallet) {
+		http.Redirect(w, r, "/articles/"+articleID.String()+"?err=wallet_required", http.StatusSeeOther)
+		return
 	}
 	h.cartStore.Add(wallet, articleID, qty)
 	http.Redirect(w, r, "/cart?wallet="+wallet, http.StatusSeeOther)
@@ -166,9 +167,29 @@ func (h *Handler) cartRemove(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "bad article id", http.StatusBadRequest)
 		return
 	}
-	wallet := r.FormValue("wallet_address")
+	wallet := strings.TrimSpace(r.FormValue("wallet_address"))
+	if !isValidWallet(wallet) {
+		http.Error(w, "wallet address required", http.StatusBadRequest)
+		return
+	}
 	h.cartStore.Remove(wallet, articleID)
 	http.Redirect(w, r, "/cart?wallet="+wallet, http.StatusSeeOther)
+}
+
+// isValidWallet returns true if s looks like an Ethereum address (0x + 40 hex chars).
+// We accept the EVM format because that is what MetaMask hands the customer.
+func isValidWallet(s string) bool {
+	if len(s) != 42 || s[0] != '0' || (s[1] != 'x' && s[1] != 'X') {
+		return false
+	}
+	for i := 2; i < 42; i++ {
+		c := s[i]
+		isHex := (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F')
+		if !isHex {
+			return false
+		}
+	}
+	return true
 }
 
 func (h *Handler) cartView(w http.ResponseWriter, r *http.Request) {
