@@ -30,12 +30,13 @@ type Server struct {
 	health     *handlers.Health
 	logger     *slog.Logger
 	shutdownTO time.Duration
+	janitorStop chan struct{}
 }
 
 // New constructs a Server bound to cfg.HTTPAddr with all routes wired.
 // ethClient may be nil — payment endpoints are disabled when no RPC is configured.
 func New(cfg *config.Config, logger *slog.Logger, pool *pgxpool.Pool, ethClient payment.EthClient) *Server {
-	health := handlers.NewHealth()
+	health := handlers.NewHealth(pool)
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", health.Live)
@@ -50,10 +51,12 @@ func New(cfg *config.Config, logger *slog.Logger, pool *pgxpool.Pool, ethClient 
 
 	articles.NewHandler(articleRepo, logger).RegisterRoutes(mux, adminMW)
 
-	cartStore := cart.NewStore()
+	cartStore := cart.NewStore(cart.WithTTL(30 * time.Minute))
 	cartStore.SetSizeObserver(func(activeCarts int) {
 		shopmetrics.ActiveCarts.Set(float64(activeCarts))
 	})
+	janitorStop := make(chan struct{})
+	cartStore.StartJanitor(5*time.Minute, janitorStop)
 	cart.NewHandler(cartStore, logger).RegisterRoutes(mux)
 
 	baseOrderRepo := orders.NewPGRepository(pool)
@@ -68,8 +71,13 @@ func New(cfg *config.Config, logger *slog.Logger, pool *pgxpool.Pool, ethClient 
 	ui.NewHandler(articleRepo, orderRepo, cartStore, cfg.AdminKey, cfg.EthWallet, cfg.EthPriceUSD, logger).
 		RegisterRoutes(mux)
 
-	// Metrics middleware wraps everything; logging is innermost to stay accurate.
-	handler := shopmetrics.Middleware(middleware.Logging(logger)(mux))
+	// Outer-to-inner: metrics → body-limit → logging → mux.
+	// Body-limit must wrap the mux before any handler reads r.Body.
+	handler := shopmetrics.Middleware(
+		middleware.BodyLimit(middleware.DefaultMaxBodyBytes)(
+			middleware.Logging(logger)(mux),
+		),
+	)
 
 	return &Server{
 		httpServer: &http.Server{
@@ -77,9 +85,10 @@ func New(cfg *config.Config, logger *slog.Logger, pool *pgxpool.Pool, ethClient 
 			Handler:           handler,
 			ReadHeaderTimeout: 5 * time.Second,
 		},
-		health:     health,
-		logger:     logger,
-		shutdownTO: cfg.ShutdownTimeout,
+		health:      health,
+		logger:      logger,
+		shutdownTO:  cfg.ShutdownTimeout,
+		janitorStop: janitorStop,
 	}
 }
 
@@ -102,6 +111,9 @@ func (s *Server) Run(ctx context.Context) error {
 	case <-ctx.Done():
 		s.logger.Info("shutdown signal received, draining...")
 		s.health.SetReady(false)
+		if s.janitorStop != nil {
+			close(s.janitorStop)
+		}
 
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), s.shutdownTO)
 		defer cancel()

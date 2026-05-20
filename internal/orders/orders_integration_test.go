@@ -104,6 +104,9 @@ func TestOrderRepository_CreateAndList(t *testing.T) {
 	if len(list) != 1 {
 		t.Fatalf("list len: want 1, got %d", len(list))
 	}
+	if len(list[0].Items) != 1 {
+		t.Errorf("list[0] items: want 1, got %d", len(list[0].Items))
+	}
 
 	// update status
 	hash := "0xTXHASH"

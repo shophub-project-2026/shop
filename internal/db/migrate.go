@@ -2,19 +2,43 @@ package db
 
 import (
 	"context"
+	"crypto/sha256"
 	"embed"
+	"encoding/hex"
+	"errors"
 	"fmt"
 	"io/fs"
 	"sort"
 	"strings"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-// RunMigrations executes all *.sql files found under dir inside the provided
-// embed.FS, in lexicographic order. Files must use IF NOT EXISTS guards to
-// remain idempotent across restarts.
+const migrationsTableDDL = `
+CREATE TABLE IF NOT EXISTS schema_migrations (
+    version    TEXT PRIMARY KEY,
+    checksum   TEXT NOT NULL,
+    applied_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+)`
+
+// ErrMigrationChecksumMismatch is returned when an already-applied migration
+// file has been edited on disk since it was first run.
+var ErrMigrationChecksumMismatch = errors.New("migration checksum mismatch")
+
+// RunMigrations applies every *.sql file in fsys/dir, in lexicographic order,
+// that has not been applied yet. Each migration is recorded in the
+// schema_migrations table together with a SHA-256 checksum so that future
+// runs can detect tampering with already-applied files.
+//
+// Each migration runs in its own transaction. If a migration fails the
+// transaction is rolled back and the error is returned — no partial state
+// is left behind.
 func RunMigrations(ctx context.Context, pool *pgxpool.Pool, fsys embed.FS, dir string) error {
+	if _, err := pool.Exec(ctx, migrationsTableDDL); err != nil {
+		return fmt.Errorf("create schema_migrations: %w", err)
+	}
+
 	entries, err := fs.ReadDir(fsys, dir)
 	if err != nil {
 		return fmt.Errorf("read migrations dir %q: %w", dir, err)
@@ -28,14 +52,73 @@ func RunMigrations(ctx context.Context, pool *pgxpool.Pool, fsys embed.FS, dir s
 	}
 	sort.Strings(names)
 
+	applied, err := loadAppliedMigrations(ctx, pool)
+	if err != nil {
+		return err
+	}
+
 	for _, name := range names {
 		data, err := fsys.ReadFile(dir + "/" + name)
 		if err != nil {
 			return fmt.Errorf("read %s: %w", name, err)
 		}
-		if _, err := pool.Exec(ctx, string(data)); err != nil {
-			return fmt.Errorf("exec %s: %w", name, err)
+		sum := sha256.Sum256(data)
+		checksum := hex.EncodeToString(sum[:])
+
+		if prev, ok := applied[name]; ok {
+			if prev != checksum {
+				return fmt.Errorf("%w: %s (db=%s, file=%s)",
+					ErrMigrationChecksumMismatch, name, prev, checksum)
+			}
+			continue
 		}
+
+		if err := applyMigration(ctx, pool, name, string(data), checksum); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func loadAppliedMigrations(ctx context.Context, pool *pgxpool.Pool) (map[string]string, error) {
+	rows, err := pool.Query(ctx, `SELECT version, checksum FROM schema_migrations`)
+	if err != nil {
+		return nil, fmt.Errorf("list applied migrations: %w", err)
+	}
+	defer rows.Close()
+	out := make(map[string]string)
+	for rows.Next() {
+		var name, sum string
+		if err := rows.Scan(&name, &sum); err != nil {
+			return nil, fmt.Errorf("scan applied migration: %w", err)
+		}
+		out[name] = sum
+	}
+	return out, rows.Err()
+}
+
+func applyMigration(ctx context.Context, pool *pgxpool.Pool, name, sql, checksum string) (rerr error) {
+	tx, err := pool.BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		return fmt.Errorf("begin tx for %s: %w", name, err)
+	}
+	defer func() {
+		if rerr != nil {
+			_ = tx.Rollback(ctx)
+		}
+	}()
+
+	if _, err := tx.Exec(ctx, sql); err != nil {
+		return fmt.Errorf("exec %s: %w", name, err)
+	}
+	if _, err := tx.Exec(ctx,
+		`INSERT INTO schema_migrations (version, checksum) VALUES ($1, $2)`,
+		name, checksum,
+	); err != nil {
+		return fmt.Errorf("record %s: %w", name, err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("commit %s: %w", name, err)
 	}
 	return nil
 }

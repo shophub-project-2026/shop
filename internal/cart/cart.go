@@ -3,6 +3,7 @@ package cart
 
 import (
 	"sync"
+	"time"
 
 	"github.com/google/uuid"
 )
@@ -23,49 +24,70 @@ type Cart struct {
 // Used to drive Prometheus gauges without cart depending on the metrics package.
 type SizeObserver func(activeCarts int)
 
-// Store is a thread-safe in-memory cart store.
-type Store struct {
-	mu       sync.Mutex
-	data     map[string]map[uuid.UUID]int
-	observer SizeObserver
+// entry holds a wallet's items together with a last-touched timestamp so the
+// janitor can expire abandoned carts.
+type entry struct {
+	items     map[uuid.UUID]int
+	updatedAt time.Time
 }
 
+// Store is a thread-safe in-memory cart store with TTL-based eviction.
+type Store struct {
+	mu       sync.Mutex
+	data     map[string]*entry
+	observer SizeObserver
+	now      func() time.Time
+	ttl      time.Duration
+}
+
+// Option configures a Store. See WithTTL / WithClock.
+type Option func(*Store)
+
+// WithTTL sets how long a wallet's cart survives without modification.
+// A non-positive value disables TTL eviction.
+func WithTTL(ttl time.Duration) Option { return func(s *Store) { s.ttl = ttl } }
+
+// WithClock injects a clock function (for deterministic tests).
+func WithClock(now func() time.Time) Option { return func(s *Store) { s.now = now } }
+
 // NewStore creates an empty cart Store.
-func NewStore() *Store {
-	return &Store{data: make(map[string]map[uuid.UUID]int)}
+func NewStore(opts ...Option) *Store {
+	s := &Store{
+		data: make(map[string]*entry),
+		now:  time.Now,
+		ttl:  30 * time.Minute,
+	}
+	for _, o := range opts {
+		o(s)
+	}
+	return s
 }
 
 // SetSizeObserver registers a callback fired on every change in the number
 // of non-empty carts. Passing nil disables notifications.
-// Must be called before any concurrent use of the Store.
 func (s *Store) SetSizeObserver(observer SizeObserver) {
 	s.observer = observer
 }
 
-// notify must be called with s.mu held.
 func (s *Store) notify() {
 	if s.observer == nil {
 		return
 	}
-	count := 0
-	for _, items := range s.data {
-		if len(items) > 0 {
-			count++
-		}
-	}
-	s.observer(count)
+	s.observer(len(s.data))
 }
 
 // Add adds quantity units of articleID to the cart for wallet.
 func (s *Store) Add(wallet string, articleID uuid.UUID, quantity int) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	wasEmpty := len(s.data[wallet]) == 0
-	if s.data[wallet] == nil {
-		s.data[wallet] = make(map[uuid.UUID]int)
+	e, exists := s.data[wallet]
+	if !exists {
+		e = &entry{items: make(map[uuid.UUID]int)}
+		s.data[wallet] = e
 	}
-	s.data[wallet][articleID] += quantity
-	if wasEmpty {
+	e.items[articleID] += quantity
+	e.updatedAt = s.now()
+	if !exists {
 		s.notify()
 	}
 }
@@ -74,21 +96,19 @@ func (s *Store) Add(wallet string, articleID uuid.UUID, quantity int) {
 func (s *Store) Len() int {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	count := 0
-	for _, items := range s.data {
-		if len(items) > 0 {
-			count++
-		}
-	}
-	return count
+	return len(s.data)
 }
 
 // Get returns the current cart for wallet.
 func (s *Store) Get(wallet string) Cart {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	items := make([]Item, 0, len(s.data[wallet]))
-	for id, qty := range s.data[wallet] {
+	e := s.data[wallet]
+	if e == nil {
+		return Cart{WalletAddress: wallet}
+	}
+	items := make([]Item, 0, len(e.items))
+	for id, qty := range e.items {
 		items = append(items, Item{ArticleID: id, Quantity: qty})
 	}
 	return Cart{WalletAddress: wallet, Items: items}
@@ -99,13 +119,19 @@ func (s *Store) Get(wallet string) Cart {
 func (s *Store) Remove(wallet string, articleID uuid.UUID) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if _, ok := s.data[wallet][articleID]; !ok {
+	e := s.data[wallet]
+	if e == nil {
 		return false
 	}
-	delete(s.data[wallet], articleID)
-	if len(s.data[wallet]) == 0 {
+	if _, ok := e.items[articleID]; !ok {
+		return false
+	}
+	delete(e.items, articleID)
+	if len(e.items) == 0 {
 		delete(s.data, wallet)
 		s.notify()
+	} else {
+		e.updatedAt = s.now()
 	}
 	return true
 }
@@ -118,4 +144,48 @@ func (s *Store) Clear(wallet string) {
 		delete(s.data, wallet)
 		s.notify()
 	}
+}
+
+// EvictExpired removes carts whose last update was more than the configured
+// TTL ago, returning the number of carts removed. Safe to call concurrently
+// with other Store methods. A non-positive TTL disables eviction.
+func (s *Store) EvictExpired() int {
+	if s.ttl <= 0 {
+		return 0
+	}
+	cutoff := s.now().Add(-s.ttl)
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	removed := 0
+	for wallet, e := range s.data {
+		if e.updatedAt.Before(cutoff) {
+			delete(s.data, wallet)
+			removed++
+		}
+	}
+	if removed > 0 {
+		s.notify()
+	}
+	return removed
+}
+
+// StartJanitor runs EvictExpired every interval until stop is closed.
+// Returns immediately; the janitor runs on its own goroutine.
+func (s *Store) StartJanitor(interval time.Duration, stop <-chan struct{}) {
+	if interval <= 0 || s.ttl <= 0 {
+		return
+	}
+	go func() {
+		ticker := time.NewTicker(interval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ticker.C:
+				s.EvictExpired()
+			case <-stop:
+				return
+			}
+		}
+	}()
 }

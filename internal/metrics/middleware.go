@@ -55,7 +55,7 @@ func Middleware(next http.Handler) http.Handler {
 }
 
 // trackVisitor updates the unique-visitor gauge.
-// Visitor key = IP + User-Agent, reset daily.
+// Visitor key = IP + User-Agent + date (UTC), reset daily.
 func trackVisitor(r *http.Request) {
 	today := time.Now().UTC().Format("2006-01-02")
 	ip := r.RemoteAddr
@@ -78,11 +78,50 @@ func trackVisitor(r *http.Request) {
 	}
 }
 
-// sanitizePath collapses dynamic path segments (UUIDs, numeric IDs) so
-// cardinality stays bounded in Prometheus label sets.
+// knownRoutes is the whitelist of route patterns the Shop service exposes.
+// Anything outside this list (e.g. probes from random scanners) maps to
+// "unknown" — keeping the cardinality of the `path` label strictly bounded.
+//
+// Each entry is matched after numeric/UUID segments have been replaced with
+// {id} by sanitizePath. Keep this in sync with handlers registered in
+// internal/server, internal/articles, internal/orders, internal/cart,
+// internal/payment and internal/ui.
+var knownRoutes = map[string]struct{}{
+	"/":                             {},
+	"/healthz":                      {},
+	"/readyz":                       {},
+	"/metrics":                      {},
+	"/articles":                     {},
+	"/articles/{id}":                {},
+	"/cart":                         {},
+	"/cart/remove":                  {},
+	"/cart/{id}":                    {},
+	"/orders":                       {},
+	"/checkout":                     {},
+	"/payment/pending":              {},
+	"/payment/verify":               {},
+	"/admin/login":                  {},
+	"/admin/logout":                 {},
+	"/admin/articles":               {},
+	"/admin/articles/new":           {},
+	"/admin/articles/{id}/edit":     {},
+	"/admin/articles/{id}/delete":   {},
+	"/admin/orders":                 {},
+}
+
+// sanitizePath returns the canonical route label for path.
+//   1. Replaces numeric/UUID segments with {id}.
+//   2. Drops the result to "unknown" if it is not in knownRoutes,
+//      preventing label cardinality blow-up from scanner traffic.
 func sanitizePath(path string) string {
-	// Keep known static prefixes, replace UUID/numeric segments with {id}.
-	// Simple approach: if a segment looks like a UUID or pure number, replace it.
+	canonical := normalizeIDs(path)
+	if _, ok := knownRoutes[canonical]; ok {
+		return canonical
+	}
+	return "unknown"
+}
+
+func normalizeIDs(path string) string {
 	var out []byte
 	segment := make([]byte, 0, 64)
 	flush := func() {
@@ -109,15 +148,13 @@ func isIDSegment(s string) bool {
 	if len(s) == 0 {
 		return false
 	}
-	// UUID: 36 chars with hyphens
 	if len(s) == 36 && s[8] == '-' && s[13] == '-' {
 		return true
 	}
-	// Pure numeric
 	for _, c := range s {
 		if c < '0' || c > '9' {
 			return false
 		}
 	}
-	return len(s) > 0
+	return true
 }

@@ -43,26 +43,34 @@ func TestMetricsMiddleware_TracksBytes(t *testing.T) {
 	}
 }
 
-func TestSanitizePath_UUID(t *testing.T) {
+func TestSanitizePath_KnownRouteWithUUID(t *testing.T) {
+	before := testutil.ToFloat64(shopmetrics.HTTPRequestsTotal.WithLabelValues("GET", "/articles/{id}", "200"))
+
 	handler := shopmetrics.Middleware(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	}))
-
 	req := httptest.NewRequest("GET", "/articles/550e8400-e29b-41d4-a716-446655440000", nil)
 	handler.ServeHTTP(httptest.NewRecorder(), req)
 
-	// Verify the label used is sanitized (not the raw UUID)
-	var found bool
-	gathering, _ := http.NewRequest("GET", "/metrics", nil)
-	_ = gathering
-	labels := map[string]string{"method": "GET", "path": "/articles/{id}", "status": "200"}
-	val := testutil.ToFloat64(shopmetrics.HTTPRequestsTotal.WithLabelValues(
-		labels["method"], labels["path"], labels["status"],
-	))
-	if val > 0 {
-		found = true
+	after := testutil.ToFloat64(shopmetrics.HTTPRequestsTotal.WithLabelValues("GET", "/articles/{id}", "200"))
+	if after-before != 1 {
+		t.Errorf("/articles/{id} counter should have incremented by 1, got %f", after-before)
 	}
-	// The metric may have been incremented in a previous test; just check it doesn't panic
-	_ = found
 	_ = strings.Contains("/articles/{id}", "{id}")
+}
+
+func TestSanitizePath_UnknownRouteFoldsToUnknown(t *testing.T) {
+	before := testutil.ToFloat64(shopmetrics.HTTPRequestsTotal.WithLabelValues("GET", "unknown", "404"))
+
+	handler := shopmetrics.Middleware(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	// Scanner-style path — must collapse to "unknown" to keep cardinality bounded.
+	req := httptest.NewRequest("GET", "/random-path-that-does-not-exist-1234", nil)
+	handler.ServeHTTP(httptest.NewRecorder(), req)
+
+	after := testutil.ToFloat64(shopmetrics.HTTPRequestsTotal.WithLabelValues("GET", "unknown", "404"))
+	if after-before != 1 {
+		t.Errorf("unknown counter should have incremented by 1, got %f", after-before)
+	}
 }

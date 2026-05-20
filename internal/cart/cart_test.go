@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/shophub-project-2026/shop/internal/cart"
@@ -115,5 +116,39 @@ func TestCart_SizeObserver(t *testing.T) {
 		if observed[i] != v {
 			t.Errorf("observer[%d]=%d, want %d (full: %v)", i, observed[i], v, observed)
 		}
+	}
+}
+
+func TestCart_EvictExpired(t *testing.T) {
+	t0 := time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)
+	clock := t0
+	store := cart.NewStore(
+		cart.WithTTL(10*time.Minute),
+		cart.WithClock(func() time.Time { return clock }),
+	)
+
+	a := uuid.New()
+	store.Add("0xFRESH", a, 1)
+	clock = t0.Add(20 * time.Minute) // 0xFRESH is now 20 min old
+	store.Add("0xRECENT", a, 1)      // touches updatedAt at clock
+
+	removed := store.EvictExpired()
+	if removed != 1 {
+		t.Errorf("EvictExpired removed %d, want 1", removed)
+	}
+	if got := store.Get("0xFRESH"); len(got.Items) != 0 {
+		t.Errorf("expired cart should be empty after evict, got %v", got.Items)
+	}
+	if got := store.Get("0xRECENT"); len(got.Items) != 1 {
+		t.Errorf("recent cart should still have 1 item, got %d", len(got.Items))
+	}
+}
+
+func TestCart_EvictExpired_DisabledWhenTTLZero(t *testing.T) {
+	store := cart.NewStore(cart.WithTTL(0))
+	a := uuid.New()
+	store.Add("0xA", a, 1)
+	if removed := store.EvictExpired(); removed != 0 {
+		t.Errorf("EvictExpired with TTL=0 removed %d, want 0", removed)
 	}
 }
