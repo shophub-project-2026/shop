@@ -137,6 +137,25 @@ func (r *pgRepository) Get(ctx context.Context, id uuid.UUID) (*Order, error) {
 	return &o, rows.Err()
 }
 
+func (r *pgRepository) FindPendingByWallet(ctx context.Context, wallet string) (*Order, error) {
+	var o Order
+	err := r.pool.QueryRow(ctx,
+		`SELECT id, wallet_address, total_amount, tx_hash, status, created_at
+		 FROM orders
+		 WHERE wallet_address = $1 AND status = $2
+		 ORDER BY created_at DESC
+		 LIMIT 1`,
+		wallet, StatusPending,
+	).Scan(&o.ID, &o.WalletAddress, &o.TotalAmount, &o.TxHash, &o.Status, &o.CreatedAt)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, ErrNotFound
+	}
+	if err != nil {
+		return nil, fmt.Errorf("find pending order: %w", err)
+	}
+	return &o, nil
+}
+
 func (r *pgRepository) UpdateStatus(ctx context.Context, id uuid.UUID, status string, txHash *string) error {
 	tag, err := r.pool.Exec(ctx,
 		`UPDATE orders SET status = $1, tx_hash = $2 WHERE id = $3`,

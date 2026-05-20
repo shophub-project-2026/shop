@@ -65,21 +65,13 @@ func (h *Handler) pending(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	list, _, err := h.orderRepo.List(r.Context(), 100, 0)
-	if err != nil {
-		h.internalError(w, "list orders", err)
+	pendingOrder, err := h.orderRepo.FindPendingByWallet(r.Context(), wallet)
+	if errors.Is(err, orders.ErrNotFound) {
+		writeError(w, http.StatusNotFound, "no pending order for this wallet")
 		return
 	}
-
-	var pendingOrder *orders.Order
-	for i := range list {
-		if list[i].WalletAddress == wallet && list[i].Status == orders.StatusPending {
-			pendingOrder = &list[i]
-			break
-		}
-	}
-	if pendingOrder == nil {
-		writeError(w, http.StatusNotFound, "no pending order for this wallet")
+	if err != nil {
+		h.internalError(w, "find pending order", err)
 		return
 	}
 

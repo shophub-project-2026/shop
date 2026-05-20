@@ -3,6 +3,7 @@ package ui
 
 import (
 	"embed"
+	"errors"
 	"fmt"
 	"html/template"
 	"log/slog"
@@ -182,26 +183,18 @@ func (h *Handler) cartView(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) checkout(w http.ResponseWriter, r *http.Request) {
 	wallet := r.URL.Query().Get("wallet")
 
-	// find pending order for wallet
-	list, _, err := h.orderRepo.List(r.Context(), 100, 0)
-	if err != nil {
-		h.serverError(w, err)
-		return
-	}
-
 	data := map[string]any{
 		"EthPriceUSD":   h.ethPrice,
 		"RecipientAddr": h.ethWallet,
 	}
 
-	for i := range list {
-		if list[i].WalletAddress == wallet && list[i].Status == orders.StatusPending {
-			o := list[i]
-			data["OrderID"] = o.ID.String()
-			data["TotalUSD"] = o.TotalAmount
-			data["EthAmount"] = o.TotalAmount / h.ethPrice
-			break
-		}
+	if o, err := h.orderRepo.FindPendingByWallet(r.Context(), wallet); err == nil {
+		data["OrderID"] = o.ID.String()
+		data["TotalUSD"] = o.TotalAmount
+		data["EthAmount"] = o.TotalAmount / h.ethPrice
+	} else if !errors.Is(err, orders.ErrNotFound) {
+		h.serverError(w, err)
+		return
 	}
 
 	// if no pending order, create one now from the cart
