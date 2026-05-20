@@ -55,4 +55,8 @@ type Repository interface {
 	List(ctx context.Context, limit, offset int) ([]Order, int, error)
 	Get(ctx context.Context, id uuid.UUID) (*Order, error)
 	UpdateStatus(ctx context.Context, id uuid.UUID, status string, txHash *string) error
+
+	// FindPendingByWallet returns the most recent pending order for wallet,
+	// or ErrNotFound if there is none.
+	FindPendingByWallet(ctx context.Context, wallet string) (*Order, error)
 }

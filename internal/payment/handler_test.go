@@ -95,6 +95,15 @@ func (m *mockOrderRepo) UpdateStatus(_ context.Context, id uuid.UUID, status str
 	return nil
 }
 
+func (m *mockOrderRepo) FindPendingByWallet(_ context.Context, wallet string) (*orders.Order, error) {
+	for _, o := range m.orders {
+		if o.WalletAddress == wallet && o.Status == orders.StatusPending {
+			return o, nil
+		}
+	}
+	return nil, orders.ErrNotFound
+}
+
 // --- helpers ---
 
 const (

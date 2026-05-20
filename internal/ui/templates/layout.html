@@ -5,20 +5,85 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>{{block "title" .}}Shop{{end}}</title>
   <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://cdn.ethers.io/lib/ethers-5.7.2.umd.min.js" type="text/javascript"></script>
 </head>
 <body class="bg-gray-50 min-h-screen">
   <nav class="bg-white shadow-sm border-b border-gray-200">
     <div class="max-w-5xl mx-auto px-4 py-3 flex items-center justify-between">
       <a href="/" class="text-xl font-bold text-indigo-600">Shop</a>
-      <div class="flex gap-4 text-sm">
+      <div class="flex items-center gap-4 text-sm">
         <a href="/" class="text-gray-600 hover:text-indigo-600">Articles</a>
-        <a href="/cart" class="text-gray-600 hover:text-indigo-600">Cart</a>
+        <a href="#" onclick="goCart(event)" class="text-gray-600 hover:text-indigo-600">Cart</a>
         <a href="/admin/articles" class="text-gray-500 hover:text-indigo-600">Admin</a>
+        {{if .IsAdmin}}
+        <form method="POST" action="/admin/logout" class="inline">
+          <button type="submit" class="text-xs text-gray-400 hover:text-red-500" title="Sign out">Sign out</button>
+        </form>
+        {{end}}
+        <span id="walletBadge" class="hidden bg-indigo-50 text-indigo-700 text-xs px-2 py-1 rounded font-mono"></span>
+        <button id="connectBtn" onclick="connectWallet()"
+                class="bg-orange-500 text-white text-xs px-3 py-1.5 rounded hover:bg-orange-600">
+          Connect Wallet
+        </button>
       </div>
     </div>
   </nav>
   <main class="max-w-5xl mx-auto px-4 py-8">
     {{block "content" .}}{{end}}
   </main>
+
+  <script>
+    // Wallet stored in localStorage, exposed as window.SHOP_WALLET.
+    // Re-rendered on every page load and after a successful connect.
+    function shopWallet() { return localStorage.getItem('shop_wallet') || ''; }
+
+    function renderWalletUI() {
+      const w = shopWallet();
+      const badge = document.getElementById('walletBadge');
+      const btn   = document.getElementById('connectBtn');
+      if (w) {
+        badge.textContent = w.slice(0, 6) + '…' + w.slice(-4);
+        badge.classList.remove('hidden');
+        btn.textContent = 'Disconnect';
+        btn.onclick = function () { localStorage.removeItem('shop_wallet'); renderWalletUI(); fillWalletInputs(); };
+      } else {
+        badge.classList.add('hidden');
+        btn.textContent = 'Connect Wallet';
+        btn.onclick = connectWallet;
+      }
+      fillWalletInputs();
+    }
+
+    // Populate any input[name="wallet_address"] that exists on the current page.
+    function fillWalletInputs() {
+      const w = shopWallet();
+      document.querySelectorAll('input[name="wallet_address"]').forEach(el => el.value = w);
+    }
+
+    async function connectWallet() {
+      if (!window.ethereum) {
+        alert('MetaMask not detected. Please install the MetaMask browser extension.');
+        return;
+      }
+      try {
+        const accounts = await window.ethereum.request({ method: 'eth_requestAccounts' });
+        if (accounts && accounts[0]) {
+          localStorage.setItem('shop_wallet', accounts[0]);
+          renderWalletUI();
+        }
+      } catch (e) {
+        console.error(e);
+      }
+    }
+
+    function goCart(e) {
+      e.preventDefault();
+      const w = shopWallet();
+      if (!w) { alert('Connect your wallet first to view your cart.'); return; }
+      window.location.href = '/cart?wallet=' + encodeURIComponent(w);
+    }
+
+    document.addEventListener('DOMContentLoaded', renderWalletUI);
+  </script>
 </body>
 </html>

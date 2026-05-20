@@ -3,10 +3,12 @@ package ui
 
 import (
 	"embed"
+	"errors"
 	"fmt"
 	"html/template"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 
@@ -99,8 +101,12 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /cart/remove", h.cartRemove)
 	mux.HandleFunc("GET /cart", h.cartView)
 	mux.HandleFunc("GET /checkout", h.checkout)
+	mux.HandleFunc("POST /checkout", h.checkoutCreate)
 
 	// admin
+	mux.HandleFunc("GET /admin/login", h.adminLoginPage)
+	mux.HandleFunc("POST /admin/login", h.adminLoginSubmit)
+	mux.HandleFunc("POST /admin/logout", h.adminLogout)
 	mux.HandleFunc("GET /admin/articles", h.adminArticles)
 	mux.HandleFunc("GET /admin/articles/new", h.adminArticleNew)
 	mux.HandleFunc("POST /admin/articles/new", h.adminArticleCreate)
@@ -119,7 +125,7 @@ func (h *Handler) articleList(w http.ResponseWriter, r *http.Request) {
 		h.serverError(w, err)
 		return
 	}
-	h.render(w, "customer/articles.html", map[string]any{
+	h.renderWithRequest(w, r, "customer/articles.html", map[string]any{
 		"Articles": list,
 		"Search":   search,
 	})
@@ -136,7 +142,10 @@ func (h *Handler) articleDetail(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
-	h.render(w, "customer/article_detail.html", map[string]any{"Article": a})
+	h.renderWithRequest(w, r, "customer/article_detail.html", map[string]any{
+		"Article": a,
+		"Err":     r.URL.Query().Get("err"),
+	})
 }
 
 func (h *Handler) cartAdd(w http.ResponseWriter, r *http.Request) {
@@ -151,8 +160,9 @@ func (h *Handler) cartAdd(w http.ResponseWriter, r *http.Request) {
 		qty = 1
 	}
 	wallet := strings.TrimSpace(r.FormValue("wallet_address"))
-	if wallet == "" {
-		wallet = "default"
+	if !isValidWallet(wallet) {
+		http.Redirect(w, r, "/articles/"+articleID.String()+"?err=wallet_required", http.StatusSeeOther)
+		return
 	}
 	h.cartStore.Add(wallet, articleID, qty)
 	http.Redirect(w, r, "/cart?wallet="+wallet, http.StatusSeeOther)
@@ -165,80 +175,148 @@ func (h *Handler) cartRemove(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "bad article id", http.StatusBadRequest)
 		return
 	}
-	wallet := r.FormValue("wallet_address")
+	wallet := strings.TrimSpace(r.FormValue("wallet_address"))
+	if !isValidWallet(wallet) {
+		http.Error(w, "wallet address required", http.StatusBadRequest)
+		return
+	}
 	h.cartStore.Remove(wallet, articleID)
 	http.Redirect(w, r, "/cart?wallet="+wallet, http.StatusSeeOther)
+}
+
+// isValidWallet returns true if s looks like an Ethereum address (0x + 40 hex chars).
+// We accept the EVM format because that is what MetaMask hands the customer.
+func isValidWallet(s string) bool {
+	if len(s) != 42 || s[0] != '0' || (s[1] != 'x' && s[1] != 'X') {
+		return false
+	}
+	for i := 2; i < 42; i++ {
+		c := s[i]
+		isHex := (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F')
+		if !isHex {
+			return false
+		}
+	}
+	return true
 }
 
 func (h *Handler) cartView(w http.ResponseWriter, r *http.Request) {
 	wallet := r.URL.Query().Get("wallet")
 	c := h.cartStore.Get(wallet)
-	h.render(w, "customer/cart.html", map[string]any{
+	h.renderWithRequest(w, r, "customer/cart.html", map[string]any{
 		"Items":  c.Items,
 		"Wallet": wallet,
 	})
 }
 
+// checkout is the pure-GET checkout view. It either shows the user's
+// existing pending order, or — if there is none — shows the cart contents
+// with a "Place order" button that POSTs back to /checkout.
 func (h *Handler) checkout(w http.ResponseWriter, r *http.Request) {
-	wallet := r.URL.Query().Get("wallet")
-
-	// find pending order for wallet
-	list, _, err := h.orderRepo.List(r.Context(), 100, 0)
-	if err != nil {
-		h.serverError(w, err)
+	wallet := strings.TrimSpace(r.URL.Query().Get("wallet"))
+	if !isValidWallet(wallet) {
+		http.Redirect(w, r, "/", http.StatusSeeOther)
 		return
 	}
 
 	data := map[string]any{
+		"Wallet":        wallet,
 		"EthPriceUSD":   h.ethPrice,
 		"RecipientAddr": h.ethWallet,
+		"Error":         r.URL.Query().Get("err"),
 	}
 
-	for i := range list {
-		if list[i].WalletAddress == wallet && list[i].Status == orders.StatusPending {
-			o := list[i]
-			data["OrderID"] = o.ID.String()
-			data["TotalUSD"] = o.TotalAmount
-			data["EthAmount"] = o.TotalAmount / h.ethPrice
-			break
-		}
-	}
-
-	// if no pending order, create one now from the cart
-	if _, ok := data["OrderID"]; !ok {
+	o, err := h.orderRepo.FindPendingByWallet(r.Context(), wallet)
+	switch {
+	case err == nil:
+		// Existing pending order — show the pay-with-MetaMask section.
+		data["OrderID"] = o.ID.String()
+		data["TotalUSD"] = o.TotalAmount
+		data["EthAmount"] = o.TotalAmount / h.ethPrice
+	case errors.Is(err, orders.ErrNotFound):
+		// No pending order — preview the cart for confirmation.
 		cartData := h.cartStore.Get(wallet)
 		if len(cartData.Items) == 0 {
 			http.Redirect(w, r, "/cart?wallet="+wallet, http.StatusSeeOther)
 			return
 		}
-		input := orders.CreateInput{WalletAddress: wallet}
+		var preview []map[string]any
+		var total float64
 		for _, item := range cartData.Items {
-			a, err := h.articleRepo.Get(r.Context(), item.ArticleID)
-			if err != nil {
+			a, gerr := h.articleRepo.Get(r.Context(), item.ArticleID)
+			if gerr != nil {
 				continue
 			}
-			input.Items = append(input.Items, orders.ItemInput{
-				ArticleID: item.ArticleID,
-				Quantity:  item.Quantity,
-				UnitPrice: a.Price,
+			line := a.Price * float64(item.Quantity)
+			total += line
+			preview = append(preview, map[string]any{
+				"Name":      a.Name,
+				"Quantity":  item.Quantity,
+				"UnitPrice": a.Price,
+				"LineTotal": line,
 			})
 		}
-		if len(input.Items) == 0 {
-			http.Redirect(w, r, "/cart?wallet="+wallet, http.StatusSeeOther)
-			return
-		}
-		o, err := h.orderRepo.Create(r.Context(), input)
-		if err != nil {
-			data["Error"] = fmt.Sprintf("Could not create order: %v", err)
-		} else {
-			h.cartStore.Clear(wallet)
-			data["OrderID"] = o.ID.String()
-			data["TotalUSD"] = o.TotalAmount
-			data["EthAmount"] = o.TotalAmount / h.ethPrice
-		}
+		data["Preview"] = preview
+		data["TotalUSD"] = total
+		data["EthAmount"] = total / h.ethPrice
+	default:
+		h.serverError(w, err)
+		return
 	}
 
-	h.render(w, "customer/checkout.html", data)
+	h.renderWithRequest(w, r, "customer/checkout.html", data)
+}
+
+// checkoutCreate handles the form POST that turns the cart into a pending order.
+// It is the *only* place where /checkout has a side effect.
+func (h *Handler) checkoutCreate(w http.ResponseWriter, r *http.Request) {
+	_ = r.ParseForm()
+	wallet := strings.TrimSpace(r.FormValue("wallet_address"))
+	if !isValidWallet(wallet) {
+		http.Redirect(w, r, "/", http.StatusSeeOther)
+		return
+	}
+
+	// If the customer already has a pending order, skip recreation (idempotent
+	// POST — protects against double-submit and accidental reload).
+	if _, err := h.orderRepo.FindPendingByWallet(r.Context(), wallet); err == nil {
+		http.Redirect(w, r, "/checkout?wallet="+wallet, http.StatusSeeOther)
+		return
+	} else if !errors.Is(err, orders.ErrNotFound) {
+		h.serverError(w, err)
+		return
+	}
+
+	cartData := h.cartStore.Get(wallet)
+	if len(cartData.Items) == 0 {
+		http.Redirect(w, r, "/cart?wallet="+wallet, http.StatusSeeOther)
+		return
+	}
+
+	input := orders.CreateInput{WalletAddress: wallet}
+	for _, item := range cartData.Items {
+		a, err := h.articleRepo.Get(r.Context(), item.ArticleID)
+		if err != nil {
+			continue
+		}
+		input.Items = append(input.Items, orders.ItemInput{
+			ArticleID: item.ArticleID,
+			Quantity:  item.Quantity,
+			UnitPrice: a.Price,
+		})
+	}
+	if len(input.Items) == 0 {
+		http.Redirect(w, r, "/cart?wallet="+wallet, http.StatusSeeOther)
+		return
+	}
+
+	if _, err := h.orderRepo.Create(r.Context(), input); err != nil {
+		msg := fmt.Sprintf("Could not create order: %v", err)
+		http.Redirect(w, r, "/checkout?wallet="+wallet+"&err="+url.QueryEscape(msg), http.StatusSeeOther)
+		return
+	}
+	h.cartStore.Clear(wallet)
+	http.Redirect(w, r, "/checkout?wallet="+wallet, http.StatusSeeOther)
 }
 
 // ── admin handlers ─────────────────────────────────────────────────────────
@@ -252,7 +330,7 @@ func (h *Handler) adminArticles(w http.ResponseWriter, r *http.Request) {
 		h.serverError(w, err)
 		return
 	}
-	h.render(w, "admin/articles.html", map[string]any{
+	h.renderWithRequest(w, r, "admin/articles.html", map[string]any{
 		"Articles": list,
 		"Flash":    r.URL.Query().Get("flash"),
 	})
@@ -262,7 +340,7 @@ func (h *Handler) adminArticleNew(w http.ResponseWriter, r *http.Request) {
 	if !h.checkAdmin(w, r) {
 		return
 	}
-	h.render(w, "admin/article_form.html", map[string]any{
+	h.renderWithRequest(w, r, "admin/article_form.html", map[string]any{
 		"IsEdit":  false,
 		"Article": articles.Article{},
 	})
@@ -278,7 +356,7 @@ func (h *Handler) adminArticleCreate(w http.ResponseWriter, r *http.Request) {
 	qty, _ := strconv.Atoi(r.FormValue("quantity"))
 
 	if name == "" || price <= 0 {
-		h.render(w, "admin/article_form.html", map[string]any{
+		h.renderWithRequest(w, r, "admin/article_form.html", map[string]any{
 			"IsEdit":  false,
 			"Article": articles.Article{Name: name, Price: price, Quantity: qty},
 			"Error":   "Name and a positive price are required.",
@@ -306,7 +384,7 @@ func (h *Handler) adminArticleEdit(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
-	h.render(w, "admin/article_form.html", map[string]any{"IsEdit": true, "Article": a})
+	h.renderWithRequest(w, r, "admin/article_form.html", map[string]any{"IsEdit": true, "Article": a})
 }
 
 func (h *Handler) adminArticleUpdate(w http.ResponseWriter, r *http.Request) {
@@ -361,7 +439,7 @@ func (h *Handler) adminOrders(w http.ResponseWriter, r *http.Request) {
 	if list == nil {
 		list = []orders.Order{}
 	}
-	h.render(w, "admin/orders.html", map[string]any{
+	h.renderWithRequest(w, r, "admin/orders.html", map[string]any{
 		"Orders":     list,
 		"Total":      total,
 		"HasPrev":    offset > 0,
@@ -371,32 +449,97 @@ func (h *Handler) adminOrders(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// ── admin auth (browser cookie flow) ───────────────────────────────────────
+
+const adminCookieName = "shop_admin"
+
+func (h *Handler) adminLoginPage(w http.ResponseWriter, r *http.Request) {
+	h.renderWithRequest(w, r, "admin/login.html", map[string]any{
+		"Error": r.URL.Query().Get("err"),
+	})
+}
+
+func (h *Handler) adminLoginSubmit(w http.ResponseWriter, r *http.Request) {
+	_ = r.ParseForm()
+	key := strings.TrimSpace(r.FormValue("admin_key"))
+	if h.adminKey == "" || key != h.adminKey {
+		http.Redirect(w, r, "/admin/login?err=Invalid+admin+key", http.StatusSeeOther)
+		return
+	}
+	http.SetCookie(w, &http.Cookie{
+		Name:     adminCookieName,
+		Value:    key,
+		Path:     "/",
+		HttpOnly: true,
+		SameSite: http.SameSiteLaxMode,
+		MaxAge:   8 * 60 * 60, // 8 hours
+	})
+	http.Redirect(w, r, "/admin/articles", http.StatusSeeOther)
+}
+
+func (h *Handler) adminLogout(w http.ResponseWriter, r *http.Request) {
+	http.SetCookie(w, &http.Cookie{
+		Name:     adminCookieName,
+		Value:    "",
+		Path:     "/",
+		HttpOnly: true,
+		SameSite: http.SameSiteLaxMode,
+		MaxAge:   -1,
+	})
+	http.Redirect(w, r, "/admin/login", http.StatusSeeOther)
+}
+
 // ── helpers ────────────────────────────────────────────────────────────────
 
 func (h *Handler) checkAdmin(w http.ResponseWriter, r *http.Request) bool {
 	if h.adminKey == "" {
 		return true
 	}
-	// Accept key from cookie (browser) or header (API)
-	key := r.Header.Get("X-Admin-Key")
-	if key == "" {
-		if c, err := r.Cookie("admin_key"); err == nil {
-			key = c.Value
-		}
+	// API clients can use X-Admin-Key, browsers use the admin cookie.
+	if r.Header.Get("X-Admin-Key") == h.adminKey {
+		return true
 	}
-	if key != h.adminKey {
+	if c, err := r.Cookie(adminCookieName); err == nil && c.Value == h.adminKey {
+		return true
+	}
+	// JSON clients get a 401, browsers get redirected to the login page.
+	if strings.Contains(r.Header.Get("Accept"), "application/json") {
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
 		return false
 	}
-	return true
+	http.Redirect(w, r, "/admin/login", http.StatusSeeOther)
+	return false
 }
 
-func (h *Handler) render(w http.ResponseWriter, name string, data any) {
+func (h *Handler) renderWithRequest(w http.ResponseWriter, r *http.Request, name string, data any) {
 	tmpl := parse(name)
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	if err := tmpl.Execute(w, data); err != nil {
+	// Inject IsAdmin so layout can show/hide admin chrome.
+	m, ok := data.(map[string]any)
+	if !ok {
+		m = map[string]any{"_": data}
+	}
+	if _, set := m["IsAdmin"]; !set {
+		m["IsAdmin"] = r != nil && h.isAdminRequest(r)
+	}
+	if err := tmpl.Execute(w, m); err != nil {
 		h.logger.Error("render template", "name", name, "err", err)
 	}
+}
+
+// isAdminRequest returns true if the request carries a valid admin credential.
+// Unlike checkAdmin, it never writes to the response.
+func (h *Handler) isAdminRequest(r *http.Request) bool {
+	if h.adminKey == "" {
+		return true
+	}
+	if r.Header.Get("X-Admin-Key") == h.adminKey {
+		return true
+	}
+	if c, err := r.Cookie(adminCookieName); err == nil && c.Value == h.adminKey {
+		return true
+	}
+	return false
 }
 
 func (h *Handler) serverError(w http.ResponseWriter, err error) {
