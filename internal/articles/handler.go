@@ -5,8 +5,14 @@ import (
 	"errors"
 	"log/slog"
 	"net/http"
+	"strconv"
 
 	"github.com/google/uuid"
+)
+
+const (
+	defaultListLimit = 50
+	maxListLimit     = 200
 )
 
 // Handler exposes the articles Repository over HTTP.
@@ -37,15 +43,46 @@ func (h *Handler) list(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "search query too long")
 		return
 	}
-	articles, err := h.repo.List(r.Context(), search)
+
+	limit, offset, ok := parsePagination(w, r)
+	if !ok {
+		return
+	}
+
+	result, total, err := h.repo.List(r.Context(), search, limit, offset)
 	if err != nil {
 		h.internalError(w, "list articles", err)
 		return
 	}
-	if articles == nil {
-		articles = []Article{}
+	if result == nil {
+		result = []Article{}
 	}
-	writeJSON(w, http.StatusOK, articles)
+	w.Header().Set("X-Total-Count", strconv.Itoa(total))
+	writeJSON(w, http.StatusOK, result)
+}
+
+// parsePagination reads ?limit= and ?offset= from the request.
+// Returns defaultListLimit when limit is absent; 0 when offset is absent.
+// Writes a 400 and returns ok=false on invalid input.
+func parsePagination(w http.ResponseWriter, r *http.Request) (limit, offset int, ok bool) {
+	limit = defaultListLimit
+	if s := r.URL.Query().Get("limit"); s != "" {
+		n, err := strconv.Atoi(s)
+		if err != nil || n < 1 || n > maxListLimit {
+			writeError(w, http.StatusBadRequest, "limit must be an integer between 1 and 200")
+			return 0, 0, false
+		}
+		limit = n
+	}
+	if s := r.URL.Query().Get("offset"); s != "" {
+		n, err := strconv.Atoi(s)
+		if err != nil || n < 0 {
+			writeError(w, http.StatusBadRequest, "offset must be a non-negative integer")
+			return 0, 0, false
+		}
+		offset = n
+	}
+	return limit, offset, true
 }
 
 func (h *Handler) get(w http.ResponseWriter, r *http.Request) {

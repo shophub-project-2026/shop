@@ -16,9 +16,9 @@ type InstrumentedArticleRepo struct {
 
 // NewInstrumentedArticleRepo wraps repo and sets the initial gauge value.
 func NewInstrumentedArticleRepo(ctx context.Context, repo articles.Repository) *InstrumentedArticleRepo {
-	// seed current count (best-effort — ignore error at startup)
-	if list, err := repo.List(ctx, ""); err == nil {
-		ArticlesTotal.Set(float64(len(list)))
+	// seed current count — limit=1 fetches only one row but returns the full total
+	if _, total, err := repo.List(ctx, "", 1, 0); err == nil {
+		ArticlesTotal.Set(float64(total))
 	}
 	return &InstrumentedArticleRepo{Repository: repo}
 }

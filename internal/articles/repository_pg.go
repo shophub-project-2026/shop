@@ -30,27 +30,25 @@ func NewPGRepository(pool *pgxpool.Pool) Repository {
 	return &pgRepository{pool: pool}
 }
 
-func (r *pgRepository) List(ctx context.Context, search string) ([]Article, error) {
-	var rows pgx.Rows
-	var err error
-
+func (r *pgRepository) List(ctx context.Context, search string, limit, offset int) ([]Article, int, error) {
+	var total int
 	if search != "" {
-		rows, err = r.pool.Query(ctx,
-			`SELECT id, name, quantity, price, created_at, updated_at
-			 FROM articles
-			 WHERE name ILIKE $1 ESCAPE '\'
-			 ORDER BY created_at DESC`,
+		if err := r.pool.QueryRow(ctx,
+			`SELECT COUNT(*) FROM articles WHERE name ILIKE $1 ESCAPE '\'`,
 			"%"+escapeLike(search)+"%",
-		)
+		).Scan(&total); err != nil {
+			return nil, 0, fmt.Errorf("count articles: %w", err)
+		}
 	} else {
-		rows, err = r.pool.Query(ctx,
-			`SELECT id, name, quantity, price, created_at, updated_at
-			 FROM articles
-			 ORDER BY created_at DESC`,
-		)
+		if err := r.pool.QueryRow(ctx, `SELECT COUNT(*) FROM articles`).Scan(&total); err != nil {
+			return nil, 0, fmt.Errorf("count articles: %w", err)
+		}
 	}
+
+	query, args := buildListQuery(search, limit, offset)
+	rows, err := r.pool.Query(ctx, query, args...)
 	if err != nil {
-		return nil, fmt.Errorf("query articles: %w", err)
+		return nil, 0, fmt.Errorf("query articles: %w", err)
 	}
 	defer rows.Close()
 
@@ -58,11 +56,29 @@ func (r *pgRepository) List(ctx context.Context, search string) ([]Article, erro
 	for rows.Next() {
 		var a Article
 		if err := rows.Scan(&a.ID, &a.Name, &a.Quantity, &a.Price, &a.CreatedAt, &a.UpdatedAt); err != nil {
-			return nil, fmt.Errorf("scan article: %w", err)
+			return nil, 0, fmt.Errorf("scan article: %w", err)
 		}
 		result = append(result, a)
 	}
-	return result, rows.Err()
+	return result, total, rows.Err()
+}
+
+// buildListQuery constructs the SELECT query and args for List.
+// limit=0 means no LIMIT clause; otherwise LIMIT and OFFSET are appended.
+func buildListQuery(search string, limit, offset int) (string, []any) {
+	const cols = `SELECT id, name, quantity, price, created_at, updated_at FROM articles`
+	if search != "" {
+		base := cols + ` WHERE name ILIKE $1 ESCAPE '\' ORDER BY created_at DESC`
+		if limit > 0 {
+			return base + ` LIMIT $2 OFFSET $3`, []any{"%" + escapeLike(search) + "%", limit, offset}
+		}
+		return base, []any{"%" + escapeLike(search) + "%"}
+	}
+	base := cols + ` ORDER BY created_at DESC`
+	if limit > 0 {
+		return base + ` LIMIT $1 OFFSET $2`, []any{limit, offset}
+	}
+	return base, nil
 }
 
 func (r *pgRepository) Get(ctx context.Context, id uuid.UUID) (*Article, error) {
