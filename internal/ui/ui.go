@@ -93,6 +93,8 @@ func NewHandler(
 }
 
 // RegisterRoutes wires all HTML page routes onto mux.
+// A catch-all GET handler is registered last so unknown paths render the
+// templated 404 page (instead of Go's default plain-text 404 body).
 func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 	// customer
 	mux.HandleFunc("GET /{$}", h.articleList)
@@ -102,6 +104,7 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /cart", h.cartView)
 	mux.HandleFunc("GET /checkout", h.checkout)
 	mux.HandleFunc("POST /checkout", h.checkoutCreate)
+	mux.HandleFunc("GET /404", h.notFound) // explicitly available for testing
 
 	// admin
 	mux.HandleFunc("GET /admin/login", h.adminLoginPage)
@@ -122,7 +125,7 @@ func (h *Handler) articleList(w http.ResponseWriter, r *http.Request) {
 	search := r.URL.Query().Get("search")
 	list, err := h.articleRepo.List(r.Context(), search)
 	if err != nil {
-		h.serverError(w, err)
+		h.serverError(w, r, err)
 		return
 	}
 	h.renderWithRequest(w, r, "customer/articles.html", map[string]any{
@@ -134,12 +137,12 @@ func (h *Handler) articleList(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) articleDetail(w http.ResponseWriter, r *http.Request) {
 	id, err := uuid.Parse(r.PathValue("id"))
 	if err != nil {
-		http.NotFound(w, r)
+		h.notFound(w, r)
 		return
 	}
 	a, err := h.articleRepo.Get(r.Context(), id)
 	if err != nil {
-		http.NotFound(w, r)
+		h.notFound(w, r)
 		return
 	}
 	h.renderWithRequest(w, r, "customer/article_detail.html", map[string]any{
@@ -152,7 +155,7 @@ func (h *Handler) cartAdd(w http.ResponseWriter, r *http.Request) {
 	_ = r.ParseForm()
 	articleID, err := uuid.Parse(r.FormValue("article_id"))
 	if err != nil {
-		http.Error(w, "bad article id", http.StatusBadRequest)
+		h.badRequest(w, r, "Invalid article identifier.")
 		return
 	}
 	qty, _ := strconv.Atoi(r.FormValue("quantity"))
@@ -172,12 +175,12 @@ func (h *Handler) cartRemove(w http.ResponseWriter, r *http.Request) {
 	_ = r.ParseForm()
 	articleID, err := uuid.Parse(r.FormValue("article_id"))
 	if err != nil {
-		http.Error(w, "bad article id", http.StatusBadRequest)
+		h.badRequest(w, r, "Invalid article identifier.")
 		return
 	}
 	wallet := strings.TrimSpace(r.FormValue("wallet_address"))
 	if !isValidWallet(wallet) {
-		http.Error(w, "wallet address required", http.StatusBadRequest)
+		h.badRequest(w, r, "A wallet address is required.")
 		return
 	}
 	h.cartStore.Remove(wallet, articleID)
@@ -260,7 +263,7 @@ func (h *Handler) checkout(w http.ResponseWriter, r *http.Request) {
 		data["TotalUSD"] = total
 		data["EthAmount"] = total / h.ethPrice
 	default:
-		h.serverError(w, err)
+		h.serverError(w, r, err)
 		return
 	}
 
@@ -283,7 +286,7 @@ func (h *Handler) checkoutCreate(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, "/checkout?wallet="+wallet, http.StatusSeeOther)
 		return
 	} else if !errors.Is(err, orders.ErrNotFound) {
-		h.serverError(w, err)
+		h.serverError(w, r, err)
 		return
 	}
 
@@ -327,7 +330,7 @@ func (h *Handler) adminArticles(w http.ResponseWriter, r *http.Request) {
 	}
 	list, err := h.articleRepo.List(r.Context(), "")
 	if err != nil {
-		h.serverError(w, err)
+		h.serverError(w, r, err)
 		return
 	}
 	h.renderWithRequest(w, r, "admin/articles.html", map[string]any{
@@ -364,7 +367,7 @@ func (h *Handler) adminArticleCreate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if _, err := h.articleRepo.Create(r.Context(), articles.CreateInput{Name: name, Price: price, Quantity: qty}); err != nil {
-		h.serverError(w, err)
+		h.serverError(w, r, err)
 		return
 	}
 	http.Redirect(w, r, "/admin/articles?flash=Article+created", http.StatusSeeOther)
@@ -376,12 +379,12 @@ func (h *Handler) adminArticleEdit(w http.ResponseWriter, r *http.Request) {
 	}
 	id, err := uuid.Parse(r.PathValue("id"))
 	if err != nil {
-		http.NotFound(w, r)
+		h.notFound(w, r)
 		return
 	}
 	a, err := h.articleRepo.Get(r.Context(), id)
 	if err != nil {
-		http.NotFound(w, r)
+		h.notFound(w, r)
 		return
 	}
 	h.renderWithRequest(w, r, "admin/article_form.html", map[string]any{"IsEdit": true, "Article": a})
@@ -393,7 +396,7 @@ func (h *Handler) adminArticleUpdate(w http.ResponseWriter, r *http.Request) {
 	}
 	id, err := uuid.Parse(r.PathValue("id"))
 	if err != nil {
-		http.NotFound(w, r)
+		h.notFound(w, r)
 		return
 	}
 	_ = r.ParseForm()
@@ -403,7 +406,7 @@ func (h *Handler) adminArticleUpdate(w http.ResponseWriter, r *http.Request) {
 
 	in := articles.UpdateInput{Name: name, Price: &price, Quantity: &qty}
 	if _, err := h.articleRepo.Update(r.Context(), id, in); err != nil {
-		h.serverError(w, err)
+		h.serverError(w, r, err)
 		return
 	}
 	http.Redirect(w, r, "/admin/articles?flash=Article+updated", http.StatusSeeOther)
@@ -415,7 +418,7 @@ func (h *Handler) adminArticleDelete(w http.ResponseWriter, r *http.Request) {
 	}
 	id, err := uuid.Parse(r.PathValue("id"))
 	if err != nil {
-		http.NotFound(w, r)
+		h.notFound(w, r)
 		return
 	}
 	_ = h.articleRepo.Delete(r.Context(), id)
@@ -433,7 +436,7 @@ func (h *Handler) adminOrders(w http.ResponseWriter, r *http.Request) {
 	}
 	list, total, err := h.orderRepo.List(r.Context(), pageSize, offset)
 	if err != nil {
-		h.serverError(w, err)
+		h.serverError(w, r, err)
 		return
 	}
 	if list == nil {
@@ -542,7 +545,31 @@ func (h *Handler) isAdminRequest(r *http.Request) bool {
 	return false
 }
 
-func (h *Handler) serverError(w http.ResponseWriter, err error) {
+// serverError renders the templated 500 page and logs the underlying cause.
+func (h *Handler) serverError(w http.ResponseWriter, r *http.Request, err error) {
 	h.logger.Error("ui server error", "err", err)
-	http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+	h.renderError(w, r, http.StatusInternalServerError, "Something went wrong",
+		"An unexpected error occurred. Please try again or come back later.")
+}
+
+// notFound renders the templated 404 page.
+func (h *Handler) notFound(w http.ResponseWriter, r *http.Request) {
+	h.renderError(w, r, http.StatusNotFound, "Page not found",
+		"The page you’re looking for doesn’t exist or was moved.")
+}
+
+// renderError sets the status code and renders the shared error template.
+func (h *Handler) renderError(w http.ResponseWriter, r *http.Request, status int, title, message string) {
+	w.WriteHeader(status)
+	h.renderWithRequest(w, r, "error.html", map[string]any{
+		"Status":  status,
+		"Title":   title,
+		"Message": message,
+	})
+}
+
+// badRequest is a small wrapper for 400 responses from form handlers; it
+// reuses the error template so the customer never sees a raw text body.
+func (h *Handler) badRequest(w http.ResponseWriter, r *http.Request, message string) {
+	h.renderError(w, r, http.StatusBadRequest, "Bad request", message)
 }
