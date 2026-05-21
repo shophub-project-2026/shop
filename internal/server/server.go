@@ -71,11 +71,13 @@ func New(cfg *config.Config, logger *slog.Logger, pool *pgxpool.Pool, ethClient 
 	ui.NewHandler(articleRepo, orderRepo, cartStore, cfg.AdminKey, cfg.EthWallet, cfg.EthPriceUSD, logger).
 		RegisterRoutes(mux)
 
-	// Outer-to-inner: metrics → body-limit → logging → mux.
+	// Outer-to-inner: security-headers → metrics → body-limit → logging → mux.
 	// Body-limit must wrap the mux before any handler reads r.Body.
-	handler := shopmetrics.Middleware(
-		middleware.BodyLimit(middleware.DefaultMaxBodyBytes)(
-			middleware.Logging(logger)(mux),
+	handler := middleware.SecurityHeaders(
+		shopmetrics.Middleware(
+			middleware.BodyLimit(middleware.DefaultMaxBodyBytes)(
+				middleware.Logging(logger)(mux),
+			),
 		),
 	)
 
