@@ -78,13 +78,35 @@ func New(cfg *config.Config, logger *slog.Logger, pool *pgxpool.Pool, ethClient 
 	ui.NewHandler(articleRepo, orderRepo, cartStore, cfg.AdminKey, cfg.EthWallet, cfg.EthPriceUSD, logger).
 		RegisterRoutes(mux)
 
-	// Outer-to-inner: otelhttp → metrics → body-limit → logging → mux.
-	// otelhttp is outermost so it captures trace-context headers propagated
-	// by upstream callers and creates the root span for each request.
+	// Outer-to-inner: otelhttp → security-headers → metrics → body-limit → csrf → logging → mux.
+	// otelhttp is outermost to capture W3C trace-context from upstream callers.
+	// CSRF wraps after body-limit so r.ParseForm can read a capped body.
+	// Skip CSRF for JSON API endpoints hit from cURL or the checkout JS.
+	csrf := middleware.CSRF(func(r *http.Request) bool {
+		switch r.URL.Path {
+		case "/payment/verify":
+			return true
+		}
+		if strings.HasPrefix(r.URL.Path, "/articles") && r.Header.Get("Content-Type") == "application/json" {
+			return true
+		}
+		if r.URL.Path == "/cart" && r.Header.Get("Content-Type") == "application/json" {
+			return true
+		}
+		if r.URL.Path == "/orders" && r.Header.Get("Content-Type") == "application/json" {
+			return true
+		}
+		return false
+	})
+
 	handler := otelhttp.NewHandler(
-		shopmetrics.Middleware(
-			middleware.BodyLimit(middleware.DefaultMaxBodyBytes)(
-				middleware.Logging(logger)(mux),
+		middleware.SecurityHeaders(
+			shopmetrics.Middleware(
+				middleware.BodyLimit(middleware.DefaultMaxBodyBytes)(
+					csrf(
+						middleware.Logging(logger)(mux),
+					),
+				),
 			),
 		),
 		"shop",
