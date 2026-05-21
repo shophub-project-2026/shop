@@ -48,6 +48,10 @@ type Config struct {
 	EthRPCURL   string  // SHOP_ETH_RPC_URL
 	EthWallet   string  // SHOP_ETH_WALLET — recipient address for payments
 	EthPriceUSD float64 // SHOP_ETH_PRICE_USD — mock ETH/USD rate
+
+	// OTLPEndpoint is the full URL of the OTLP/HTTP trace collector,
+	// e.g. "http://otel-collector:4318". Leave empty to disable tracing.
+	OTLPEndpoint string // SHOP_OTLP_ENDPOINT
 }
 
 // Load reads the configuration from environment variables, applies sane
@@ -64,9 +68,10 @@ func Load() (*Config, error) {
 		DBUser:          getEnv("SHOP_DB_USER", "shop_user"),
 		DBPassword:      getEnv("SHOP_DB_PASSWORD", "shop_password"),
 		AdminKey:        getEnv("SHOP_ADMIN_KEY", ""),
-		EthRPCURL:       getEnv("SHOP_ETH_RPC_URL", ""),
-		EthWallet:       getEnv("SHOP_ETH_WALLET", ""),
-		EthPriceUSD:     3000.0, // default mock rate; override with SHOP_ETH_PRICE_USD
+		EthRPCURL:    getEnv("SHOP_ETH_RPC_URL", ""),
+		EthWallet:    getEnv("SHOP_ETH_WALLET", ""),
+		EthPriceUSD:  3000.0, // default mock rate; override with SHOP_ETH_PRICE_USD
+		OTLPEndpoint: getEnv("SHOP_OTLP_ENDPOINT", ""),
 
 		DBMaxConns:          25,
 		DBMinConns:          2,

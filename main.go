@@ -11,6 +11,7 @@ import (
 	"github.com/shophub-project-2026/shop/internal/db"
 	"github.com/shophub-project-2026/shop/internal/payment"
 	"github.com/shophub-project-2026/shop/internal/server"
+	"github.com/shophub-project-2026/shop/internal/tracing"
 )
 
 func main() {
@@ -35,6 +36,15 @@ func run() error {
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+
+	tracerShutdown, err := tracing.Init(ctx, cfg.OTLPEndpoint, "shop")
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tracerShutdown(context.Background()) }()
+	if cfg.OTLPEndpoint != "" {
+		logger.Info("tracing enabled", "otlp_endpoint", cfg.OTLPEndpoint)
+	}
 
 	pool, err := db.Open(ctx, cfg)
 	if err != nil {

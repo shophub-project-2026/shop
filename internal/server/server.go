@@ -22,6 +22,7 @@ import (
 	"github.com/shophub-project-2026/shop/internal/server/handlers"
 	"github.com/shophub-project-2026/shop/internal/server/middleware"
 	"github.com/shophub-project-2026/shop/internal/ui"
+	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
 )
 
 // Server is the top-level HTTP server for the Shop service.
@@ -71,12 +72,16 @@ func New(cfg *config.Config, logger *slog.Logger, pool *pgxpool.Pool, ethClient 
 	ui.NewHandler(articleRepo, orderRepo, cartStore, cfg.AdminKey, cfg.EthWallet, cfg.EthPriceUSD, logger).
 		RegisterRoutes(mux)
 
-	// Outer-to-inner: metrics → body-limit → logging → mux.
-	// Body-limit must wrap the mux before any handler reads r.Body.
-	handler := shopmetrics.Middleware(
-		middleware.BodyLimit(middleware.DefaultMaxBodyBytes)(
-			middleware.Logging(logger)(mux),
+	// Outer-to-inner: otelhttp → metrics → body-limit → logging → mux.
+	// otelhttp is outermost so it captures trace-context headers propagated
+	// by upstream callers and creates the root span for each request.
+	handler := otelhttp.NewHandler(
+		shopmetrics.Middleware(
+			middleware.BodyLimit(middleware.DefaultMaxBodyBytes)(
+				middleware.Logging(logger)(mux),
+			),
 		),
+		"shop",
 	)
 
 	return &Server{
