@@ -26,6 +26,7 @@
         <td class="px-4 py-3 text-right text-gray-600">{{.Quantity}}</td>
         <td class="px-4 py-3 text-right">
           <form method="POST" action="/cart/remove" class="inline">
+            <input type="hidden" name="csrf_token" value="{{$.CSRF}}">
             <input type="hidden" name="article_id" value="{{.ArticleID}}">
             <input type="hidden" name="wallet_address" value="">
             <button type="submit" class="text-red-500 hover:text-red-700 text-xs">Remove</button>

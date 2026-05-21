@@ -9,15 +9,20 @@
 
   {{if .Err}}
     <div class="mb-4 p-3 rounded bg-red-50 text-red-700 text-sm border border-red-200">
-      {{if eq .Err "wallet_required"}}Connect your MetaMask wallet first (top-right button).{{else}}{{.Err}}{{end}}
+      {{if eq .Err "wallet_required"}}Connect your MetaMask wallet first.{{else}}{{.Err}}{{end}}
     </div>
   {{end}}
 
   {{if gt .Article.Quantity 0}}
-  <div id="walletNeeded" class="hidden mb-4 p-3 rounded bg-yellow-50 text-yellow-700 text-sm border border-yellow-200">
-    Please connect your wallet (top-right) before adding items to your cart.
+  <div id="walletNeeded" class="hidden mb-4 p-4 rounded bg-yellow-50 border border-yellow-200">
+    <p class="text-sm text-yellow-800 mb-3">Connect your MetaMask wallet to add items to your cart.</p>
+    <button type="button" onclick="connectWallet()"
+            class="bg-orange-500 text-white text-sm px-4 py-2 rounded hover:bg-orange-600 font-medium">
+      Connect MetaMask
+    </button>
   </div>
   <form id="addForm" method="POST" action="/cart" class="hidden">
+    <input type="hidden" name="csrf_token" value="{{.CSRF}}">
     <input type="hidden" name="article_id" value="{{.Article.ID}}">
     <input type="hidden" name="wallet_address" value="">
     <div class="flex items-center gap-3 mb-4">
