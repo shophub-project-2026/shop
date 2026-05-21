@@ -44,9 +44,15 @@ func NewHandler(
 }
 
 // RegisterRoutes wires the payment routes onto mux.
-func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
+// verifyMW is applied only to POST /payment/verify (typically a rate limiter)
+// — passing nil leaves the route un-wrapped.
+func (h *Handler) RegisterRoutes(mux *http.ServeMux, verifyMW func(http.Handler) http.Handler) {
 	mux.HandleFunc("GET /payment/pending", h.pending)
-	mux.HandleFunc("POST /payment/verify", h.verify)
+	verify := http.Handler(http.HandlerFunc(h.verify))
+	if verifyMW != nil {
+		verify = verifyMW(verify)
+	}
+	mux.Handle("POST /payment/verify", verify)
 }
 
 type pendingResponse struct {

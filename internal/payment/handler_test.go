@@ -115,7 +115,7 @@ func newTestMux(ethClient payment.EthClient, orderRepo orders.Repository, cartSt
 	logger := slog.New(slog.NewTextHandler(os.Stderr, nil))
 	h := payment.NewHandler(orderRepo, cartStore, ethClient, testWallet, testEthPriceUSD, logger)
 	mux := http.NewServeMux()
-	h.RegisterRoutes(mux)
+	h.RegisterRoutes(mux, nil)
 	return mux
 }
 

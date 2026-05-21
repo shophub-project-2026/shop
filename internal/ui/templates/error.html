@@ -1,0 +1,12 @@
+{{template "layout.html" .}}
+{{define "title"}}{{.Status}} — {{.Title}}{{end}}
+{{define "content"}}
+<div class="max-w-md mx-auto text-center py-16">
+  <p class="text-6xl font-bold text-indigo-600 mb-4">{{.Status}}</p>
+  <h1 class="text-2xl font-bold text-gray-800 mb-3">{{.Title}}</h1>
+  <p class="text-gray-500 mb-8">{{.Message}}</p>
+  <a href="/" class="inline-block bg-indigo-600 text-white px-6 py-2 rounded hover:bg-indigo-700">
+    Back to homepage
+  </a>
+</div>
+{{end}}

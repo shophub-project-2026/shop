@@ -154,6 +154,7 @@
   </div>
 
   <form method="POST" action="/checkout">
+    <input type="hidden" name="csrf_token" value="{{.CSRF}}">
     <input type="hidden" name="wallet_address" value="{{.Wallet}}">
     <button type="submit"
             class="w-full bg-indigo-600 text-white py-3 rounded hover:bg-indigo-700 font-medium">

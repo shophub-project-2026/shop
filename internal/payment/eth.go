@@ -33,16 +33,37 @@ func NewEthClient(ctx context.Context, rpcURL string) (EthClient, error) {
 	return client, nil
 }
 
+// weiPerEther is 10^18, exact.
+var weiPerEther = new(big.Int).Exp(big.NewInt(10), big.NewInt(18), nil)
+
 // USDtoWei converts a USD amount to Wei using the given ETH/USD rate.
-// 1 ETH = 1e18 Wei.
+//
+// 1 ETH = 1e18 Wei.  Wei = (usd / ethPriceUSD) * 1e18 = (usd * 1e18) / ethPriceUSD.
+//
+// We perform the arithmetic with math/big rationals so the result is
+// exact up to the final integer truncation. The previous float64
+// implementation lost precision for amounts above ~$9 million in USD or
+// rates with many fractional digits.
+//
+// Non-positive inputs return 0 — they are programmer errors that callers
+// should have rejected up front; we don't want the function to panic.
 func USDtoWei(usd float64, ethPriceUSD float64) *big.Int {
-	// eth = usd / ethPriceUSD
-	// wei = eth * 1e18
-	ethAmount := usd / ethPriceUSD
-	weiFloat := ethAmount * 1e18
-	wei := new(big.Float).SetFloat64(weiFloat)
-	result, _ := wei.Int(nil)
-	return result
+	if usd <= 0 || ethPriceUSD <= 0 {
+		return new(big.Int)
+	}
+	// Build big.Rat values from the floats. SetFloat64 is exact for any
+	// finite IEEE-754 number, so no precision is lost at this stage.
+	usdRat := new(big.Rat).SetFloat64(usd)
+	rateRat := new(big.Rat).SetFloat64(ethPriceUSD)
+	weiPerEtherRat := new(big.Rat).SetInt(weiPerEther)
+
+	// wei = usd * 1e18 / rate
+	num := new(big.Rat).Mul(usdRat, weiPerEtherRat)
+	res := new(big.Rat).Quo(num, rateRat)
+
+	// Floor to integer Wei.
+	q := new(big.Int).Quo(res.Num(), res.Denom())
+	return q
 }
 
 // VerifyPayment checks that the transaction identified by txHash on the
