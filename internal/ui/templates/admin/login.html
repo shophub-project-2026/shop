@@ -1,0 +1,26 @@
+{{template "layout.html" .}}
+{{define "title"}}Admin login{{end}}
+{{define "content"}}
+<div class="max-w-md mx-auto">
+  <h1 class="text-2xl font-bold text-gray-800 mb-6">Admin login</h1>
+
+  {{if .Error}}
+    <div class="mb-4 p-3 rounded bg-red-50 text-red-700 text-sm border border-red-200">{{.Error}}</div>
+  {{end}}
+
+  <form method="POST" action="/admin/login"
+        class="bg-white rounded-lg shadow-sm border border-gray-200 p-6 flex flex-col gap-4">
+    <input type="hidden" name="csrf_token" value="{{.CSRF}}">
+    <div>
+      <label class="block text-sm font-medium text-gray-700 mb-1">Admin key</label>
+      <input type="password" name="admin_key" required autofocus
+             class="w-full border border-gray-300 rounded px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400">
+      <p class="text-xs text-gray-400 mt-1">Set via the <code>SHOP_ADMIN_KEY</code> environment variable.</p>
+    </div>
+    <button type="submit"
+            class="bg-indigo-600 text-white py-2 rounded hover:bg-indigo-700 font-medium text-sm">
+      Sign in
+    </button>
+  </form>
+</div>
+{{end}}

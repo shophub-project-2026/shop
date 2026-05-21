@@ -9,37 +9,108 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"strings"
 	"time"
 
+	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
+	"github.com/shophub-project-2026/shop/internal/articles"
+	"github.com/shophub-project-2026/shop/internal/cart"
 	"github.com/shophub-project-2026/shop/internal/config"
+	shopmetrics "github.com/shophub-project-2026/shop/internal/metrics"
+	"github.com/shophub-project-2026/shop/internal/orders"
+	"github.com/shophub-project-2026/shop/internal/payment"
 	"github.com/shophub-project-2026/shop/internal/server/handlers"
 	"github.com/shophub-project-2026/shop/internal/server/middleware"
+	"github.com/shophub-project-2026/shop/internal/ui"
+	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
 )
 
-// Server is the top-level HTTP server for the Shop service. It owns the
-// http.Server, the route mux and the readiness handler so the lifecycle
-// (mark ready, mark not-ready, shut down) is coordinated in one place.
+// Server is the top-level HTTP server for the Shop service.
 type Server struct {
 	httpServer *http.Server
 	health     *handlers.Health
 	logger     *slog.Logger
 	shutdownTO time.Duration
+	janitorStop chan struct{}
 }
 
 // New constructs a Server bound to cfg.HTTPAddr with all routes wired.
-// It does not start the listener -- call Run to do that.
-func New(cfg *config.Config, logger *slog.Logger) *Server {
-	health := handlers.NewHealth()
+// ethClient may be nil — payment endpoints are disabled when no RPC is configured.
+func New(cfg *config.Config, logger *slog.Logger, pool *pgxpool.Pool, ethClient payment.EthClient) *Server {
+	health := handlers.NewHealth(pool)
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", health.Live)
 	mux.HandleFunc("GET /readyz", health.Ready)
+	mux.Handle("GET /metrics", promhttp.Handler())
 
-	// Logging is applied at the outermost layer so probe traffic is
-	// captured alongside business endpoints. If probes become noisy in
-	// production, filter by path inside the middleware rather than
-	// dropping them from the chain entirely.
-	handler := middleware.Logging(logger)(mux)
+	adminMW := middleware.Admin(cfg.AdminKey)
+
+	// Wrap repos with instrumentation so business metrics stay in sync.
+	baseArticleRepo := articles.NewPGRepository(pool)
+	articleRepo := shopmetrics.NewInstrumentedArticleRepo(context.Background(), baseArticleRepo)
+
+	articles.NewHandler(articleRepo, logger).RegisterRoutes(mux, adminMW)
+
+	cartStore := cart.NewStore(cart.WithTTL(30 * time.Minute))
+	cartStore.SetSizeObserver(func(activeCarts int) {
+		shopmetrics.ActiveCarts.Set(float64(activeCarts))
+	})
+	janitorStop := make(chan struct{})
+	cartStore.StartJanitor(5*time.Minute, janitorStop)
+	cart.NewHandler(cartStore, logger).RegisterRoutes(mux)
+
+	baseOrderRepo := orders.NewPGRepository(pool)
+	orderRepo := shopmetrics.NewInstrumentedOrderRepo(baseOrderRepo)
+	orders.NewHandler(orderRepo, cartStore, articleRepo, logger).RegisterRoutes(mux, adminMW)
+
+	if ethClient != nil {
+		// Limit /payment/verify to ~1 req/s per client with a small burst.
+		// On-chain verification is expensive (RPC call + receipt fetch); we do
+		// not want a single buggy or malicious wallet to drain the connection
+		// pool to the upstream Ethereum node.
+		paymentLimiter := middleware.NewRateLimiter(1, 5, 10*time.Minute)
+		payment.NewHandler(orderRepo, cartStore, ethClient, cfg.EthWallet, cfg.EthPriceUSD, logger).
+			RegisterRoutes(mux, paymentLimiter.Middleware)
+	}
+
+	ui.NewHandler(articleRepo, orderRepo, cartStore, cfg.AdminKey, cfg.EthWallet, cfg.EthPriceUSD, logger).
+		RegisterRoutes(mux)
+
+	// Outer-to-inner: otelhttp → security-headers → metrics → body-limit → csrf → logging → mux.
+	// otelhttp is outermost to capture W3C trace-context from upstream callers.
+	// CSRF wraps after body-limit so r.ParseForm can read a capped body.
+	// Skip CSRF for JSON API endpoints hit from cURL or the checkout JS.
+	csrf := middleware.CSRF(func(r *http.Request) bool {
+		switch r.URL.Path {
+		case "/payment/verify":
+			return true
+		}
+		if strings.HasPrefix(r.URL.Path, "/articles") && r.Header.Get("Content-Type") == "application/json" {
+			return true
+		}
+		if r.URL.Path == "/cart" && r.Header.Get("Content-Type") == "application/json" {
+			return true
+		}
+		if r.URL.Path == "/orders" && r.Header.Get("Content-Type") == "application/json" {
+			return true
+		}
+		return false
+	})
+
+	handler := otelhttp.NewHandler(
+		middleware.SecurityHeaders(
+			shopmetrics.Middleware(
+				middleware.BodyLimit(middleware.DefaultMaxBodyBytes)(
+					csrf(
+						middleware.Logging(logger)(mux),
+					),
+				),
+			),
+		),
+		"shop",
+	)
 
 	return &Server{
 		httpServer: &http.Server{
@@ -47,17 +118,14 @@ func New(cfg *config.Config, logger *slog.Logger) *Server {
 			Handler:           handler,
 			ReadHeaderTimeout: 5 * time.Second,
 		},
-		health:     health,
-		logger:     logger,
-		shutdownTO: cfg.ShutdownTimeout,
+		health:      health,
+		logger:      logger,
+		shutdownTO:  cfg.ShutdownTimeout,
+		janitorStop: janitorStop,
 	}
 }
 
-// Run starts the HTTP listener and blocks until ctx is cancelled (e.g.
-// by a SIGTERM handler in main), then performs a graceful shutdown
-// bounded by cfg.ShutdownTimeout. The readiness probe is flipped to
-// ready right before serving so the load balancer can route to us, and
-// flipped to not-ready as soon as ctx is cancelled so it can drain.
+// Run starts the HTTP listener and blocks until ctx is cancelled.
 func (s *Server) Run(ctx context.Context) error {
 	errCh := make(chan error, 1)
 	go func() {
@@ -76,6 +144,9 @@ func (s *Server) Run(ctx context.Context) error {
 	case <-ctx.Done():
 		s.logger.Info("shutdown signal received, draining...")
 		s.health.SetReady(false)
+		if s.janitorStop != nil {
+			close(s.janitorStop)
+		}
 
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), s.shutdownTO)
 		defer cancel()

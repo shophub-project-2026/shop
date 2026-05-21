@@ -26,6 +26,32 @@ type Config struct {
 
 	// LogLevel: "debug", "info", "warn", "error".
 	LogLevel string
+
+	// Database connection parameters.
+	DBHost     string
+	DBPort     string
+	DBName     string
+	DBUser     string
+	DBPassword string
+
+	// Database pool tuning. Defaults are conservative; override per-env.
+	DBMaxConns           int32
+	DBMinConns           int32
+	DBMaxConnLifetime    time.Duration
+	DBMaxConnIdleTime    time.Duration
+	DBHealthCheckPeriod  time.Duration
+
+	// Admin API key — required in X-Admin-Key header for write endpoints.
+	AdminKey string
+
+	// Ethereum / Sepolia testnet configuration.
+	EthRPCURL   string  // SHOP_ETH_RPC_URL
+	EthWallet   string  // SHOP_ETH_WALLET — recipient address for payments
+	EthPriceUSD float64 // SHOP_ETH_PRICE_USD — mock ETH/USD rate
+
+	// OTLPEndpoint is the full URL of the OTLP/HTTP trace collector,
+	// e.g. "http://otel-collector:4318". Leave empty to disable tracing.
+	OTLPEndpoint string // SHOP_OTLP_ENDPOINT
 }
 
 // Load reads the configuration from environment variables, applies sane
@@ -36,6 +62,60 @@ func Load() (*Config, error) {
 		Environment:     getEnv("SHOP_ENV", "development"),
 		LogLevel:        getEnv("SHOP_LOG_LEVEL", "info"),
 		ShutdownTimeout: 15 * time.Second,
+		DBHost:          getEnv("SHOP_DB_HOST", "localhost"),
+		DBPort:          getEnv("SHOP_DB_PORT", "5432"),
+		DBName:          getEnv("SHOP_DB_NAME", "shop_db"),
+		DBUser:          getEnv("SHOP_DB_USER", "shop_user"),
+		DBPassword:      getEnv("SHOP_DB_PASSWORD", "shop_password"),
+		AdminKey:        getEnv("SHOP_ADMIN_KEY", ""),
+		EthRPCURL:    getEnv("SHOP_ETH_RPC_URL", ""),
+		EthWallet:    getEnv("SHOP_ETH_WALLET", ""),
+		EthPriceUSD:  3000.0, // default mock rate; override with SHOP_ETH_PRICE_USD
+		OTLPEndpoint: getEnv("SHOP_OTLP_ENDPOINT", ""),
+
+		DBMaxConns:          25,
+		DBMinConns:          2,
+		DBMaxConnLifetime:   30 * time.Minute,
+		DBMaxConnIdleTime:   5 * time.Minute,
+		DBHealthCheckPeriod: 1 * time.Minute,
+	}
+
+	for _, spec := range []struct {
+		name string
+		set  func(int) error
+	}{
+		{"SHOP_DB_MAX_CONNS", func(n int) error {
+			if n <= 0 {
+				return fmt.Errorf("SHOP_DB_MAX_CONNS must be > 0")
+			}
+			cfg.DBMaxConns = int32(n)
+			return nil
+		}},
+		{"SHOP_DB_MIN_CONNS", func(n int) error {
+			if n < 0 {
+				return fmt.Errorf("SHOP_DB_MIN_CONNS must be >= 0")
+			}
+			cfg.DBMinConns = int32(n)
+			return nil
+		}},
+	} {
+		if v := os.Getenv(spec.name); v != "" {
+			n, err := strconv.Atoi(v)
+			if err != nil {
+				return nil, fmt.Errorf("%s: %w", spec.name, err)
+			}
+			if err := spec.set(n); err != nil {
+				return nil, err
+			}
+		}
+	}
+
+	if v := os.Getenv("SHOP_ETH_PRICE_USD"); v != "" {
+		price, err := strconv.ParseFloat(v, 64)
+		if err != nil || price <= 0 {
+			return nil, fmt.Errorf("SHOP_ETH_PRICE_USD must be a positive number")
+		}
+		cfg.EthPriceUSD = price
 	}
 
 	if v := os.Getenv("SHOP_SHUTDOWN_TIMEOUT_SECONDS"); v != "" {

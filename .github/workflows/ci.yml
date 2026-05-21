@@ -31,7 +31,7 @@ jobs:
       - name: Run golangci-lint
         uses: golangci/golangci-lint-action@v7
         with:
-          version: v2.0.0
+          version: v2.12.2
           args: --timeout=5m ./...
 
   build:
@@ -61,6 +61,25 @@ jobs:
 
       - name: Test
         run: go test -v ./...
+
+  integration-test:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.22'
+          cache: true
+
+      - name: Download dependencies
+        run: go mod download
+
+      - name: Run integration tests
+        run: go test -v -tags=integration -timeout=120s ./...
 
   docker-verify:
     needs: build

@@ -1,0 +1,45 @@
+{{template "layout.html" .}}
+{{define "title"}}Cart{{end}}
+{{define "content"}}
+<h1 class="text-2xl font-bold text-gray-800 mb-2">Your Cart</h1>
+<p class="text-sm text-gray-500 mb-6">Wallet: <span class="font-mono">{{.Wallet}}</span></p>
+
+{{if not .Items}}
+  <div class="bg-white rounded-lg shadow-sm border border-gray-200 p-8 text-center">
+    <p class="text-gray-500 mb-3">Your cart is empty.</p>
+    <a href="/" class="inline-block bg-indigo-600 text-white px-4 py-2 rounded text-sm hover:bg-indigo-700">Browse articles</a>
+  </div>
+{{else}}
+<div class="bg-white rounded-lg shadow-sm border border-gray-200 overflow-hidden mb-6">
+  <table class="w-full text-sm">
+    <thead class="bg-gray-50 border-b border-gray-200">
+      <tr>
+        <th class="text-left px-4 py-3 text-gray-600">Article</th>
+        <th class="text-right px-4 py-3 text-gray-600">Qty</th>
+        <th class="text-right px-4 py-3 text-gray-600"></th>
+      </tr>
+    </thead>
+    <tbody>
+      {{range .Items}}
+      <tr class="border-b border-gray-100 last:border-0">
+        <td class="px-4 py-3 text-gray-800 font-mono text-xs">{{.ArticleID}}</td>
+        <td class="px-4 py-3 text-right text-gray-600">{{.Quantity}}</td>
+        <td class="px-4 py-3 text-right">
+          <form method="POST" action="/cart/remove" class="inline">
+            <input type="hidden" name="csrf_token" value="{{$.CSRF}}">
+            <input type="hidden" name="article_id" value="{{.ArticleID}}">
+            <input type="hidden" name="wallet_address" value="">
+            <button type="submit" class="text-red-500 hover:text-red-700 text-xs">Remove</button>
+          </form>
+        </td>
+      </tr>
+      {{end}}
+    </tbody>
+  </table>
+</div>
+<a id="checkoutLink" href="/checkout?wallet={{.Wallet}}"
+   class="inline-block bg-indigo-600 text-white px-6 py-2 rounded hover:bg-indigo-700 font-medium">
+  Checkout
+</a>
+{{end}}
+{{end}}

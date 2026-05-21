@@ -1,0 +1,167 @@
+{{template "layout.html" .}}
+{{define "title"}}Checkout{{end}}
+{{define "content"}}
+<div class="max-w-lg">
+  <h1 class="text-2xl font-bold text-gray-800 mb-2">Checkout</h1>
+  <p class="text-sm text-gray-500 mb-6">Wallet: <span class="font-mono">{{.Wallet}}</span></p>
+
+  {{if .Error}}
+  <div class="mb-4 p-3 rounded bg-red-50 text-red-700 text-sm border border-red-200">{{.Error}}</div>
+  {{end}}
+
+  {{if .OrderID}}
+  {{/* ── Pending order exists — show pay-with-MetaMask UI ────────────────── */}}
+  <div class="bg-white rounded-lg shadow-sm border border-gray-200 p-6 mb-6">
+    <h2 class="font-semibold text-gray-700 mb-4">Order Summary</h2>
+    <div class="flex justify-between text-sm mb-1">
+      <span class="text-gray-600">Total (USD)</span>
+      <span class="font-medium">${{printf "%.2f" .TotalUSD}}</span>
+    </div>
+    <div class="flex justify-between text-sm mb-1">
+      <span class="text-gray-600">ETH rate</span>
+      <span class="font-medium">1 ETH = ${{printf "%.2f" .EthPriceUSD}}</span>
+    </div>
+    <div class="flex justify-between text-sm font-bold mt-3 pt-3 border-t border-gray-200">
+      <span>Pay in ETH</span>
+      <span class="text-indigo-600">{{printf "%.8f" .EthAmount}} ETH</span>
+    </div>
+    <p class="text-xs text-gray-400 mt-2">Send to: <span class="font-mono">{{.RecipientAddr}}</span></p>
+  </div>
+
+  <div class="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
+    <h2 class="font-semibold text-gray-700 mb-4">Pay with MetaMask</h2>
+    <p class="text-sm text-gray-500 mb-4">Connect your MetaMask wallet (Sepolia testnet) and send the exact ETH amount to complete the purchase.</p>
+
+    <button id="payBtn" onclick="connectAndPay()"
+            class="w-full bg-orange-500 text-white py-2 rounded hover:bg-orange-600 font-medium mb-3">
+      Connect MetaMask &amp; Pay
+    </button>
+
+    <div id="txSection" class="hidden">
+      <p class="text-sm text-gray-600 mb-2">Transaction sent! Verify it to mark the order paid:</p>
+      <input type="text" id="txHash" placeholder="0x…"
+             class="w-full border border-gray-300 rounded px-3 py-2 text-sm font-mono mb-3">
+      <button onclick="verifyPayment()"
+              class="w-full bg-indigo-600 text-white py-2 rounded hover:bg-indigo-700 font-medium">
+        Verify Payment
+      </button>
+    </div>
+    <div id="statusMsg" class="text-sm mt-3"></div>
+  </div>
+
+  <script>
+    const ORDER_ID    = "{{.OrderID}}";
+    const ETH_AMOUNT  = "{{printf `%.8f` .EthAmount}}";
+    const RECIPIENT   = "{{.RecipientAddr}}";
+
+    async function connectAndPay() {
+      const statusEl = document.getElementById('statusMsg');
+      if (!window.ethereum) {
+        statusEl.textContent = 'MetaMask not detected. Please install it.';
+        statusEl.className = 'text-sm mt-3 text-red-600';
+        return;
+      }
+      try {
+        statusEl.textContent = 'Connecting…';
+        await window.ethereum.request({ method: 'eth_requestAccounts' });
+        const provider = new ethers.providers.Web3Provider(window.ethereum);
+        const signer   = provider.getSigner();
+        try {
+          await window.ethereum.request({
+            method: 'wallet_switchEthereumChain',
+            params: [{ chainId: '0xaa36a7' }],
+          });
+        } catch (e) {
+          statusEl.textContent = 'Please switch MetaMask to Sepolia testnet.';
+          statusEl.className = 'text-sm mt-3 text-red-600';
+          return;
+        }
+        statusEl.textContent = 'Sending transaction…';
+        const tx = await signer.sendTransaction({
+          to:    RECIPIENT,
+          value: ethers.utils.parseEther(ETH_AMOUNT),
+        });
+        statusEl.textContent = 'Transaction sent: ' + tx.hash;
+        statusEl.className   = 'text-sm mt-3 text-green-600';
+        document.getElementById('txHash').value = tx.hash;
+        document.getElementById('txSection').classList.remove('hidden');
+      } catch (err) {
+        statusEl.textContent = 'Error: ' + (err.message || err);
+        statusEl.className   = 'text-sm mt-3 text-red-600';
+      }
+    }
+
+    async function verifyPayment() {
+      const hash    = document.getElementById('txHash').value.trim();
+      const statusEl = document.getElementById('statusMsg');
+      if (!hash) { statusEl.textContent = 'Enter a tx hash.'; return; }
+      statusEl.textContent = 'Verifying…';
+      try {
+        const res = await fetch('/payment/verify', {
+          method:  'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body:    JSON.stringify({ order_id: ORDER_ID, tx_hash: hash }),
+        });
+        const data = await res.json();
+        if (!res.ok) {
+          statusEl.textContent = 'Verification failed: ' + (data.error || res.status);
+          statusEl.className   = 'text-sm mt-3 text-red-600';
+        } else {
+          statusEl.textContent = 'Payment confirmed! Order is now paid.';
+          statusEl.className   = 'text-sm mt-3 text-green-600';
+          setTimeout(() => window.location.href = '/', 2000);
+        }
+      } catch (err) {
+        statusEl.textContent = 'Network error: ' + err.message;
+        statusEl.className   = 'text-sm mt-3 text-red-600';
+      }
+    }
+  </script>
+
+  {{else}}
+  {{/* ── No pending order — show cart preview + Place-order form ─────────── */}}
+  <div class="bg-white rounded-lg shadow-sm border border-gray-200 overflow-hidden mb-6">
+    <table class="w-full text-sm">
+      <thead class="bg-gray-50 border-b border-gray-200">
+        <tr>
+          <th class="text-left px-4 py-3 text-gray-600">Article</th>
+          <th class="text-right px-4 py-3 text-gray-600">Qty</th>
+          <th class="text-right px-4 py-3 text-gray-600">Unit</th>
+          <th class="text-right px-4 py-3 text-gray-600">Line</th>
+        </tr>
+      </thead>
+      <tbody>
+        {{range .Preview}}
+        <tr class="border-b border-gray-100 last:border-0">
+          <td class="px-4 py-3 text-gray-800">{{.Name}}</td>
+          <td class="px-4 py-3 text-right text-gray-600">{{.Quantity}}</td>
+          <td class="px-4 py-3 text-right text-gray-600">${{printf "%.2f" .UnitPrice}}</td>
+          <td class="px-4 py-3 text-right text-gray-800 font-medium">${{printf "%.2f" .LineTotal}}</td>
+        </tr>
+        {{end}}
+      </tbody>
+      <tfoot class="bg-gray-50 border-t border-gray-200">
+        <tr>
+          <td colspan="3" class="px-4 py-3 text-right font-semibold text-gray-700">Total</td>
+          <td class="px-4 py-3 text-right font-bold text-indigo-600">${{printf "%.2f" .TotalUSD}}</td>
+        </tr>
+        <tr>
+          <td colspan="3" class="px-4 py-2 text-right text-xs text-gray-500">Pay in ETH</td>
+          <td class="px-4 py-2 text-right text-xs font-mono text-gray-700">{{printf "%.8f" .EthAmount}}</td>
+        </tr>
+      </tfoot>
+    </table>
+  </div>
+
+  <form method="POST" action="/checkout">
+    <input type="hidden" name="csrf_token" value="{{.CSRF}}">
+    <input type="hidden" name="wallet_address" value="{{.Wallet}}">
+    <button type="submit"
+            class="w-full bg-indigo-600 text-white py-3 rounded hover:bg-indigo-700 font-medium">
+      Place order
+    </button>
+    <p class="text-xs text-gray-400 mt-2 text-center">Stock will be reserved when you place the order.</p>
+  </form>
+  {{end}}
+</div>
+{{end}}

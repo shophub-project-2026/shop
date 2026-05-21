@@ -8,14 +8,14 @@ import (
 	"syscall"
 
 	"github.com/shophub-project-2026/shop/internal/config"
+	"github.com/shophub-project-2026/shop/internal/db"
+	"github.com/shophub-project-2026/shop/internal/payment"
 	"github.com/shophub-project-2026/shop/internal/server"
+	"github.com/shophub-project-2026/shop/internal/tracing"
 )
 
 func main() {
 	if err := run(); err != nil {
-		// run() handles its own logging where possible. This is the last
-		// line of defence -- print to stderr and exit non-zero so the
-		// process supervisor (Kubernetes) sees the failure.
 		_, _ = os.Stderr.WriteString("fatal: " + err.Error() + "\n")
 		os.Exit(1)
 	}
@@ -37,13 +37,45 @@ func run() error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	srv := server.New(cfg, logger)
+	tracerShutdown, err := tracing.Init(ctx, cfg.OTLPEndpoint, "shop")
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tracerShutdown(context.Background()) }()
+	if cfg.OTLPEndpoint != "" {
+		logger.Info("tracing enabled", "otlp_endpoint", cfg.OTLPEndpoint)
+	}
+
+	pool, err := db.Open(ctx, cfg)
+	if err != nil {
+		return err
+	}
+	defer pool.Close()
+
+	logger.Info("running database migrations")
+	if err := db.RunMigrations(ctx, pool, db.Migrations, "migrations"); err != nil {
+		return err
+	}
+	logger.Info("migrations applied")
+
+	// Ethereum client is optional — payment endpoints are disabled when
+	// SHOP_ETH_RPC_URL is not configured (e.g. local dev without testnet).
+	var ethClient payment.EthClient
+	if cfg.EthRPCURL != "" {
+		c, err := payment.NewEthClient(ctx, cfg.EthRPCURL)
+		if err != nil {
+			return err
+		}
+		ethClient = c
+		logger.Info("ethereum client connected", "rpc", cfg.EthRPCURL)
+	} else {
+		logger.Info("SHOP_ETH_RPC_URL not set, payment endpoints disabled")
+	}
+
+	srv := server.New(cfg, logger, pool, ethClient)
 	return srv.Run(ctx)
 }
 
-// newLogger returns a slog.Logger whose format and level are derived
-// from cfg. Text handler in development for human-readable output;
-// JSON handler elsewhere so log aggregators can parse fields.
 func newLogger(cfg *config.Config) *slog.Logger {
 	level := slog.LevelInfo
 	switch cfg.LogLevel {
