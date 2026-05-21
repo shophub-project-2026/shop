@@ -29,6 +29,16 @@
     </div>
   </nav>
   <main class="max-w-5xl mx-auto px-4 py-8">
+    {{with .Flash}}{{if .Kind}}
+      {{$base := "mb-6 px-4 py-3 rounded text-sm border"}}
+      {{if eq .Kind "ok"}}
+        <div class="{{$base}} bg-green-50 text-green-700 border-green-200">{{.Text}}</div>
+      {{else if eq .Kind "err"}}
+        <div class="{{$base}} bg-red-50 text-red-700 border-red-200">{{.Text}}</div>
+      {{else}}
+        <div class="{{$base}} bg-blue-50 text-blue-700 border-blue-200">{{.Text}}</div>
+      {{end}}
+    {{end}}{{end}}
     {{block "content" .}}{{end}}
   </main>
 

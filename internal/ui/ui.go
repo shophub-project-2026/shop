@@ -335,7 +335,6 @@ func (h *Handler) adminArticles(w http.ResponseWriter, r *http.Request) {
 	}
 	h.renderWithRequest(w, r, "admin/articles.html", map[string]any{
 		"Articles": list,
-		"Flash":    r.URL.Query().Get("flash"),
 	})
 }
 
@@ -370,7 +369,8 @@ func (h *Handler) adminArticleCreate(w http.ResponseWriter, r *http.Request) {
 		h.serverError(w, r, err)
 		return
 	}
-	http.Redirect(w, r, "/admin/articles?flash=Article+created", http.StatusSeeOther)
+	setFlash(w, flashSuccess, "Article created.")
+	http.Redirect(w, r, "/admin/articles", http.StatusSeeOther)
 }
 
 func (h *Handler) adminArticleEdit(w http.ResponseWriter, r *http.Request) {
@@ -409,7 +409,8 @@ func (h *Handler) adminArticleUpdate(w http.ResponseWriter, r *http.Request) {
 		h.serverError(w, r, err)
 		return
 	}
-	http.Redirect(w, r, "/admin/articles?flash=Article+updated", http.StatusSeeOther)
+	setFlash(w, flashSuccess, "Article updated.")
+	http.Redirect(w, r, "/admin/articles", http.StatusSeeOther)
 }
 
 func (h *Handler) adminArticleDelete(w http.ResponseWriter, r *http.Request) {
@@ -422,7 +423,8 @@ func (h *Handler) adminArticleDelete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	_ = h.articleRepo.Delete(r.Context(), id)
-	http.Redirect(w, r, "/admin/articles?flash=Article+deleted", http.StatusSeeOther)
+	setFlash(w, flashSuccess, "Article deleted.")
+	http.Redirect(w, r, "/admin/articles", http.StatusSeeOther)
 }
 
 func (h *Handler) adminOrders(w http.ResponseWriter, r *http.Request) {
@@ -517,13 +519,18 @@ func (h *Handler) checkAdmin(w http.ResponseWriter, r *http.Request) bool {
 func (h *Handler) renderWithRequest(w http.ResponseWriter, r *http.Request, name string, data any) {
 	tmpl := parse(name)
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	// Inject IsAdmin so layout can show/hide admin chrome.
 	m, ok := data.(map[string]any)
 	if !ok {
 		m = map[string]any{"_": data}
 	}
 	if _, set := m["IsAdmin"]; !set {
 		m["IsAdmin"] = r != nil && h.isAdminRequest(r)
+	}
+	// Consume the flash cookie once — the layout shows it banner-style.
+	if r != nil {
+		if _, set := m["Flash"]; !set {
+			m["Flash"] = takeFlash(w, r)
+		}
 	}
 	if err := tmpl.Execute(w, m); err != nil {
 		h.logger.Error("render template", "name", name, "err", err)
