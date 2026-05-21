@@ -120,7 +120,7 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 
 func (h *Handler) articleList(w http.ResponseWriter, r *http.Request) {
 	search := r.URL.Query().Get("search")
-	list, err := h.articleRepo.List(r.Context(), search)
+	list, _, err := h.articleRepo.List(r.Context(), search, 0, 0)
 	if err != nil {
 		h.serverError(w, err)
 		return
@@ -325,7 +325,7 @@ func (h *Handler) adminArticles(w http.ResponseWriter, r *http.Request) {
 	if !h.checkAdmin(w, r) {
 		return
 	}
-	list, err := h.articleRepo.List(r.Context(), "")
+	list, _, err := h.articleRepo.List(r.Context(), "", 0, 0)
 	if err != nil {
 		h.serverError(w, err)
 		return

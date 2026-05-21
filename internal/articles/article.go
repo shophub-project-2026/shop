@@ -96,7 +96,9 @@ type UpdateInput struct {
 
 // Repository is the data-access contract for articles.
 type Repository interface {
-	List(ctx context.Context, search string) ([]Article, error)
+	// List returns a page of articles matching search, plus the total count
+	// across all pages. limit=0 disables the page cap and returns every row.
+	List(ctx context.Context, search string, limit, offset int) ([]Article, int, error)
 	Get(ctx context.Context, id uuid.UUID) (*Article, error)
 	Create(ctx context.Context, in CreateInput) (*Article, error)
 	Update(ctx context.Context, id uuid.UUID, in UpdateInput) (*Article, error)

@@ -24,14 +24,25 @@ func newMockRepo() *mockRepo {
 	return &mockRepo{data: make(map[uuid.UUID]articles.Article)}
 }
 
-func (m *mockRepo) List(_ context.Context, search string) ([]articles.Article, error) {
+func (m *mockRepo) List(_ context.Context, search string, limit, offset int) ([]articles.Article, int, error) {
 	var out []articles.Article
 	for _, a := range m.data {
 		if search == "" || contains(a.Name, search) {
 			out = append(out, a)
 		}
 	}
-	return out, nil
+	total := len(out)
+	if limit > 0 {
+		if offset >= len(out) {
+			out = nil
+		} else {
+			out = out[offset:]
+			if limit < len(out) {
+				out = out[:limit]
+			}
+		}
+	}
+	return out, total, nil
 }
 
 func (m *mockRepo) Get(_ context.Context, id uuid.UUID) (*articles.Article, error) {

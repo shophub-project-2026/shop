@@ -59,17 +59,17 @@ func TestArticleRepository_CRUD(t *testing.T) {
 		t.Errorf("name: want Widget, got %s", a.Name)
 	}
 
-	// list
-	list, err := repo.List(ctx, "")
+	// list (no limit — returns all)
+	list, total, err := repo.List(ctx, "", 0, 0)
 	if err != nil {
 		t.Fatalf("List: %v", err)
 	}
-	if len(list) != 1 {
-		t.Fatalf("list len: want 1, got %d", len(list))
+	if len(list) != 1 || total != 1 {
+		t.Fatalf("list len: want 1/1, got %d/%d", len(list), total)
 	}
 
 	// list with search
-	found, err := repo.List(ctx, "idg")
+	found, _, err := repo.List(ctx, "idg", 0, 0)
 	if err != nil {
 		t.Fatalf("List search: %v", err)
 	}
