@@ -64,8 +64,13 @@ func New(cfg *config.Config, logger *slog.Logger, pool *pgxpool.Pool, ethClient 
 	orders.NewHandler(orderRepo, cartStore, articleRepo, logger).RegisterRoutes(mux, adminMW)
 
 	if ethClient != nil {
+		// Limit /payment/verify to ~1 req/s per client with a small burst.
+		// On-chain verification is expensive (RPC call + receipt fetch); we do
+		// not want a single buggy or malicious wallet to drain the connection
+		// pool to the upstream Ethereum node.
+		paymentLimiter := middleware.NewRateLimiter(1, 5, 10*time.Minute)
 		payment.NewHandler(orderRepo, cartStore, ethClient, cfg.EthWallet, cfg.EthPriceUSD, logger).
-			RegisterRoutes(mux)
+			RegisterRoutes(mux, paymentLimiter.Middleware)
 	}
 
 	ui.NewHandler(articleRepo, orderRepo, cartStore, cfg.AdminKey, cfg.EthWallet, cfg.EthPriceUSD, logger).
