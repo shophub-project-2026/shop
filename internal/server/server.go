@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -76,12 +77,38 @@ func New(cfg *config.Config, logger *slog.Logger, pool *pgxpool.Pool, ethClient 
 	ui.NewHandler(articleRepo, orderRepo, cartStore, cfg.AdminKey, cfg.EthWallet, cfg.EthPriceUSD, logger).
 		RegisterRoutes(mux)
 
-	// Outer-to-inner: security-headers → metrics → body-limit → logging → mux.
-	// Body-limit must wrap the mux before any handler reads r.Body.
+	// Outer-to-inner: security-headers → metrics → body-limit → csrf → logging → mux.
+	// CSRF wraps after body-limit so r.ParseForm can read a capped body.
+	// Skip CSRF for non-browser endpoints: /payment/verify (JSON API hit from
+	// the checkout JS with no cookie context), /cart and /articles JSON API
+	// routes.
+	csrf := middleware.CSRF(func(r *http.Request) bool {
+		switch r.URL.Path {
+		case "/payment/verify":
+			return true
+		}
+		// JSON API routes on /articles use X-Admin-Key auth and are usually
+		// hit from cURL or the CLI, not from a browser form.
+		if strings.HasPrefix(r.URL.Path, "/articles") && r.Header.Get("Content-Type") == "application/json" {
+			return true
+		}
+		// Cart JSON API likewise.
+		if r.URL.Path == "/cart" && r.Header.Get("Content-Type") == "application/json" {
+			return true
+		}
+		// Orders JSON API (POST /orders).
+		if r.URL.Path == "/orders" && r.Header.Get("Content-Type") == "application/json" {
+			return true
+		}
+		return false
+	})
+
 	handler := middleware.SecurityHeaders(
 		shopmetrics.Middleware(
 			middleware.BodyLimit(middleware.DefaultMaxBodyBytes)(
-				middleware.Logging(logger)(mux),
+				csrf(
+					middleware.Logging(logger)(mux),
+				),
 			),
 		),
 	)

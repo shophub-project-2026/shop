@@ -28,6 +28,7 @@
         <td class="px-4 py-3 text-right space-x-2">
           <a href="/admin/articles/{{.ID}}/edit" class="text-indigo-600 hover:underline">Edit</a>
           <form method="POST" action="/admin/articles/{{.ID}}/delete" class="inline">
+            <input type="hidden" name="csrf_token" value="{{$.CSRF}}">
             <button type="submit" class="text-red-500 hover:underline"
                     onclick="return confirm('Delete {{.Name}}?')">Delete</button>
           </form>

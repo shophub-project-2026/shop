@@ -16,6 +16,7 @@ import (
 	"github.com/shophub-project-2026/shop/internal/articles"
 	"github.com/shophub-project-2026/shop/internal/cart"
 	"github.com/shophub-project-2026/shop/internal/orders"
+	"github.com/shophub-project-2026/shop/internal/server/middleware"
 )
 
 //go:embed templates
@@ -526,10 +527,13 @@ func (h *Handler) renderWithRequest(w http.ResponseWriter, r *http.Request, name
 	if _, set := m["IsAdmin"]; !set {
 		m["IsAdmin"] = r != nil && h.isAdminRequest(r)
 	}
-	// Consume the flash cookie once — the layout shows it banner-style.
 	if r != nil {
 		if _, set := m["Flash"]; !set {
+			// Consume the flash cookie once — the layout shows it banner-style.
 			m["Flash"] = takeFlash(w, r)
+		}
+		if _, set := m["CSRF"]; !set {
+			m["CSRF"] = middleware.CSRFToken(r)
 		}
 	}
 	if err := tmpl.Execute(w, m); err != nil {

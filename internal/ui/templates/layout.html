@@ -17,6 +17,7 @@
         <a href="/admin/articles" class="text-gray-500 hover:text-indigo-600">Admin</a>
         {{if .IsAdmin}}
         <form method="POST" action="/admin/logout" class="inline">
+          <input type="hidden" name="csrf_token" value="{{.CSRF}}">
           <button type="submit" class="text-xs text-gray-400 hover:text-red-500" title="Sign out">Sign out</button>
         </form>
         {{end}}
