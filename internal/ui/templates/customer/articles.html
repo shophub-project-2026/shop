@@ -12,16 +12,25 @@
 </div>
 
 {{if not .Articles}}
-  <p class="text-gray-500">No articles found.</p>
+  <div class="bg-white rounded-lg shadow-sm border border-gray-200 p-8 text-center text-gray-500">
+    {{if .Search}}No articles match “{{.Search}}”.{{else}}No articles available yet.{{end}}
+  </div>
 {{else}}
 <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
   {{range .Articles}}
-  <div class="bg-white rounded-lg shadow-sm border border-gray-200 p-5 flex flex-col gap-3">
+  <a href="/articles/{{.ID}}"
+     class="bg-white rounded-lg shadow-sm border border-gray-200 p-5 flex flex-col gap-3 hover:shadow-md hover:border-indigo-300 transition-all">
     <h2 class="font-semibold text-gray-800 text-lg">{{.Name}}</h2>
     <p class="text-indigo-600 font-bold text-xl">${{printf "%.2f" .Price}}</p>
-    <p class="text-sm text-gray-500">{{.Quantity}} in stock</p>
-    <a href="/articles/{{.ID}}" class="mt-auto block text-center bg-indigo-50 text-indigo-700 border border-indigo-200 rounded py-2 text-sm hover:bg-indigo-100">View details</a>
-  </div>
+    {{if eq .Quantity 0}}
+      <span class="inline-block w-fit text-xs px-2 py-0.5 rounded-full bg-red-100 text-red-700">Out of stock</span>
+    {{else if lt .Quantity 5}}
+      <span class="inline-block w-fit text-xs px-2 py-0.5 rounded-full bg-yellow-100 text-yellow-700">Only {{.Quantity}} left</span>
+    {{else}}
+      <span class="inline-block w-fit text-xs px-2 py-0.5 rounded-full bg-green-100 text-green-700">{{.Quantity}} in stock</span>
+    {{end}}
+    <span class="mt-auto block text-center bg-indigo-50 text-indigo-700 border border-indigo-200 rounded py-2 text-sm">View details</span>
+  </a>
   {{end}}
 </div>
 {{end}}
