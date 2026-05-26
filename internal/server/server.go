@@ -51,19 +51,24 @@ func New(cfg *config.Config, logger *slog.Logger, pool *pgxpool.Pool, ethClient 
 	baseArticleRepo := articles.NewPGRepository(pool)
 	articleRepo := shopmetrics.NewInstrumentedArticleRepo(context.Background(), baseArticleRepo)
 
-	articles.NewHandler(articleRepo, logger).RegisterRoutes(mux, adminMW)
-
 	cartStore := cart.NewStore(cart.WithTTL(30 * time.Minute))
 	cartStore.SetSizeObserver(func(activeCarts int) {
 		shopmetrics.ActiveCarts.Set(float64(activeCarts))
 	})
 	janitorStop := make(chan struct{})
 	cartStore.StartJanitor(5*time.Minute, janitorStop)
-	cart.NewHandler(cartStore, logger).RegisterRoutes(mux)
 
 	baseOrderRepo := orders.NewPGRepository(pool)
 	orderRepo := shopmetrics.NewInstrumentedOrderRepo(baseOrderRepo)
-	orders.NewHandler(orderRepo, cartStore, articleRepo, logger).RegisterRoutes(mux, adminMW)
+
+	// JSON API mounted under /api/v1/ so the same path roots (articles, cart,
+	// orders) can also be used by the SSR UI without ServeMux pattern collisions.
+	// Each handler still registers its routes unprefixed (kept for existing
+	// unit tests); the prefix is stripped here at mount time.
+	apiMux := http.NewServeMux()
+	articles.NewHandler(articleRepo, logger).RegisterRoutes(apiMux, adminMW)
+	cart.NewHandler(cartStore, logger).RegisterRoutes(apiMux)
+	orders.NewHandler(orderRepo, cartStore, articleRepo, logger).RegisterRoutes(apiMux, adminMW)
 
 	if ethClient != nil {
 		// Limit /payment/verify to ~1 req/s per client with a small burst.
@@ -72,8 +77,10 @@ func New(cfg *config.Config, logger *slog.Logger, pool *pgxpool.Pool, ethClient 
 		// pool to the upstream Ethereum node.
 		paymentLimiter := middleware.NewRateLimiter(1, 5, 10*time.Minute)
 		payment.NewHandler(orderRepo, cartStore, ethClient, cfg.EthWallet, cfg.EthPriceUSD, logger).
-			RegisterRoutes(mux, paymentLimiter.Middleware)
+			RegisterRoutes(apiMux, paymentLimiter.Middleware)
 	}
+
+	mux.Handle("/api/v1/", http.StripPrefix("/api/v1", apiMux))
 
 	ui.NewHandler(articleRepo, orderRepo, cartStore, cfg.AdminKey, cfg.EthWallet, cfg.EthPriceUSD, logger).
 		RegisterRoutes(mux)
@@ -83,20 +90,10 @@ func New(cfg *config.Config, logger *slog.Logger, pool *pgxpool.Pool, ethClient 
 	// CSRF wraps after body-limit so r.ParseForm can read a capped body.
 	// Skip CSRF for JSON API endpoints hit from cURL or the checkout JS.
 	csrf := middleware.CSRF(func(r *http.Request) bool {
-		switch r.URL.Path {
-		case "/payment/verify":
-			return true
-		}
-		if strings.HasPrefix(r.URL.Path, "/articles") && r.Header.Get("Content-Type") == "application/json" {
-			return true
-		}
-		if r.URL.Path == "/cart" && r.Header.Get("Content-Type") == "application/json" {
-			return true
-		}
-		if r.URL.Path == "/orders" && r.Header.Get("Content-Type") == "application/json" {
-			return true
-		}
-		return false
+		// All JSON API endpoints live under /api/v1/* and are exempt
+		// from CSRF: they don't use form posts and clients (browser JS,
+		// curl, integration tests) authenticate per request.
+		return strings.HasPrefix(r.URL.Path, "/api/v1/")
 	})
 
 	handler := otelhttp.NewHandler(

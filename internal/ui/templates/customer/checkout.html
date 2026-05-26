@@ -97,7 +97,7 @@
       if (!hash) { statusEl.textContent = 'Enter a tx hash.'; return; }
       statusEl.textContent = 'Verifying…';
       try {
-        const res = await fetch('/payment/verify', {
+        const res = await fetch('/api/v1/payment/verify', {
           method:  'POST',
           headers: { 'Content-Type': 'application/json' },
           body:    JSON.stringify({ order_id: ORDER_ID, tx_hash: hash }),
