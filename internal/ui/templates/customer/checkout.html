@@ -49,6 +49,18 @@
     <div id="statusMsg" class="text-sm mt-3"></div>
   </div>
 
+  <form method="POST" action="/checkout/cancel" class="mt-4"
+        onsubmit="return confirm('Cancel this pending order? Your current cart will become the basis for a new order.');">
+    <input type="hidden" name="csrf_token" value="{{.CSRF}}">
+    <input type="hidden" name="wallet_address" value="{{.Wallet}}">
+    <input type="hidden" name="order_id" value="{{.OrderID}}">
+    <button type="submit"
+            class="w-full bg-white border border-gray-300 text-gray-700 py-2 rounded hover:bg-gray-50 text-sm font-medium">
+      Cancel pending order
+    </button>
+    <p class="text-xs text-gray-400 mt-2 text-center">Use this if payment failed and you want to start over.</p>
+  </form>
+
   <script>
     const ORDER_ID    = "{{.OrderID}}";
     const ETH_AMOUNT  = "{{printf `%.8f` .EthAmount}}";
