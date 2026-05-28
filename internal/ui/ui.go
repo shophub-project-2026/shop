@@ -16,6 +16,7 @@ import (
 	"github.com/shophub-project-2026/shop/internal/articles"
 	"github.com/shophub-project-2026/shop/internal/cart"
 	"github.com/shophub-project-2026/shop/internal/orders"
+	"github.com/shophub-project-2026/shop/internal/payment"
 	"github.com/shophub-project-2026/shop/internal/server/middleware"
 )
 
@@ -235,9 +236,16 @@ func (h *Handler) checkout(w http.ResponseWriter, r *http.Request) {
 	switch {
 	case err == nil:
 		// Existing pending order — show the pay-with-MetaMask section.
+		// EthWei is the exact integer amount the backend will require at
+		// verification time. We hand it to the JS as a string so MetaMask
+		// signs the precise wei value; converting back through a float-
+		// truncated ETH literal (e.g. "%.8f") loses the last few digits
+		// and produces an "insufficient payment" error of a few thousand
+		// wei.
 		data["OrderID"] = o.ID.String()
 		data["TotalUSD"] = o.TotalAmount
 		data["EthAmount"] = o.TotalAmount / h.ethPrice
+		data["EthWei"] = payment.USDtoWei(o.TotalAmount, h.ethPrice).String()
 	case errors.Is(err, orders.ErrNotFound):
 		// No pending order — preview the cart for confirmation.
 		cartData := h.cartStore.Get(wallet)
