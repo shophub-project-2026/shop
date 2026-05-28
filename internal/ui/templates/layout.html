@@ -14,12 +14,15 @@
       <div class="flex items-center gap-4 text-sm">
         <a href="/" class="text-gray-600 hover:text-indigo-600">Articles</a>
         <a href="#" onclick="goCart(event)" class="text-gray-600 hover:text-indigo-600">Cart</a>
-        <a href="/admin/articles" class="text-gray-500 hover:text-indigo-600">Admin</a>
         {{if .IsAdmin}}
+        <a href="/admin/articles" class="text-gray-500 hover:text-indigo-600">Articles</a>
+        <a href="/admin/orders" class="text-gray-500 hover:text-indigo-600">Orders</a>
         <form method="POST" action="/admin/logout" class="inline">
           <input type="hidden" name="csrf_token" value="{{.CSRF}}">
           <button type="submit" class="text-xs text-gray-400 hover:text-red-500" title="Sign out">Sign out</button>
         </form>
+        {{else}}
+        <a href="/admin/articles" class="text-gray-500 hover:text-indigo-600">Admin</a>
         {{end}}
         <span id="walletBadge" class="hidden bg-indigo-50 text-indigo-700 text-xs px-2 py-1 rounded font-mono"></span>
         <button id="connectBtn" onclick="connectWallet()"
