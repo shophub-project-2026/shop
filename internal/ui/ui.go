@@ -105,6 +105,7 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /cart", h.cartView)
 	mux.HandleFunc("GET /checkout", h.checkout)
 	mux.HandleFunc("POST /checkout", h.checkoutCreate)
+	mux.HandleFunc("POST /checkout/cancel", h.checkoutCancel)
 	mux.HandleFunc("GET /404", h.notFound) // explicitly available for testing
 
 	// admin
@@ -320,6 +321,49 @@ func (h *Handler) checkoutCreate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	h.cartStore.Clear(wallet)
+	http.Redirect(w, r, "/checkout?wallet="+wallet, http.StatusSeeOther)
+}
+
+// checkoutCancel marks a pending order as failed so the customer can
+// place a fresh one. Needed when payment verification fails (e.g. RPC
+// outage) and the customer would otherwise be stuck seeing the old
+// order's totals on /checkout instead of their current cart.
+//
+// Authorisation: the form-submitted wallet must match the order's
+// wallet — same trust model as the rest of the customer flow (wallet
+// == identity, no MetaMask signature is required for cancel).
+func (h *Handler) checkoutCancel(w http.ResponseWriter, r *http.Request) {
+	_ = r.ParseForm()
+	wallet := strings.TrimSpace(r.FormValue("wallet_address"))
+	if !isValidWallet(wallet) {
+		http.Redirect(w, r, "/", http.StatusSeeOther)
+		return
+	}
+	orderID, err := uuid.Parse(r.FormValue("order_id"))
+	if err != nil {
+		http.Redirect(w, r, "/checkout?wallet="+wallet, http.StatusSeeOther)
+		return
+	}
+
+	o, err := h.orderRepo.Get(r.Context(), orderID)
+	if errors.Is(err, orders.ErrNotFound) {
+		http.Redirect(w, r, "/checkout?wallet="+wallet, http.StatusSeeOther)
+		return
+	}
+	if err != nil {
+		h.serverError(w, r, err)
+		return
+	}
+	if o.WalletAddress != wallet || o.Status != orders.StatusPending {
+		http.Redirect(w, r, "/checkout?wallet="+wallet, http.StatusSeeOther)
+		return
+	}
+
+	if err := h.orderRepo.UpdateStatus(r.Context(), orderID, orders.StatusFailed, nil); err != nil {
+		h.serverError(w, r, err)
+		return
+	}
+	setFlash(w, flashSuccess, "Pending order cancelled. You can place a new one.")
 	http.Redirect(w, r, "/checkout?wallet="+wallet, http.StatusSeeOther)
 }
 
