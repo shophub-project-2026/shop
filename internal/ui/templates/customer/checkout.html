@@ -63,7 +63,10 @@
 
   <script>
     const ORDER_ID    = "{{.OrderID}}";
-    const ETH_AMOUNT  = "{{printf `%.8f` .EthAmount}}";
+    // ETH_WEI is the exact wei amount the backend will require; we sign
+    // this integer directly so a "%.8f" rounding doesn't lose the last
+    // few digits and trigger an "insufficient payment" error.
+    const ETH_WEI     = "{{.EthWei}}";
     const RECIPIENT   = "{{.RecipientAddr}}";
 
     async function connectAndPay() {
@@ -91,7 +94,7 @@
         statusEl.textContent = 'Sending transaction…';
         const tx = await signer.sendTransaction({
           to:    RECIPIENT,
-          value: ethers.utils.parseEther(ETH_AMOUNT),
+          value: ethers.BigNumber.from(ETH_WEI),
         });
         statusEl.textContent = 'Transaction sent: ' + tx.hash;
         statusEl.className   = 'text-sm mt-3 text-green-600';
