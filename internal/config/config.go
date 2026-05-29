@@ -35,11 +35,11 @@ type Config struct {
 	DBPassword string
 
 	// Database pool tuning. Defaults are conservative; override per-env.
-	DBMaxConns           int32
-	DBMinConns           int32
-	DBMaxConnLifetime    time.Duration
-	DBMaxConnIdleTime    time.Duration
-	DBHealthCheckPeriod  time.Duration
+	DBMaxConns          int32
+	DBMinConns          int32
+	DBMaxConnLifetime   time.Duration
+	DBMaxConnIdleTime   time.Duration
+	DBHealthCheckPeriod time.Duration
 
 	// Admin API key — required in X-Admin-Key header for write endpoints.
 	AdminKey string
@@ -82,10 +82,10 @@ func Load() (*Config, error) {
 		RedisAddr:       getEnv("SHOP_REDIS_ADDR", "localhost:6379"),
 		RedisPassword:   getEnv("SHOP_REDIS_PASSWORD", ""),
 		AdminKey:        getEnv("SHOP_ADMIN_KEY", ""),
-		EthRPCURL:    getEnv("SHOP_ETH_RPC_URL", ""),
-		EthWallet:    getEnv("SHOP_ETH_WALLET", ""),
-		EthPriceUSD:  3000.0, // default mock rate; override with SHOP_ETH_PRICE_USD
-		OTLPEndpoint: getEnv("SHOP_OTLP_ENDPOINT", ""),
+		EthRPCURL:       getEnv("SHOP_ETH_RPC_URL", ""),
+		EthWallet:       getEnv("SHOP_ETH_WALLET", ""),
+		EthPriceUSD:     3000.0, // default mock rate; override with SHOP_ETH_PRICE_USD
+		OTLPEndpoint:    getEnv("SHOP_OTLP_ENDPOINT", ""),
 
 		DBMaxConns:          25,
 		DBMinConns:          2,

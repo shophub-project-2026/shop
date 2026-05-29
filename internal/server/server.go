@@ -27,10 +27,10 @@ import (
 
 // Server is the top-level HTTP server for the Shop service.
 type Server struct {
-	httpServer *http.Server
-	health     *handlers.Health
-	logger     *slog.Logger
-	shutdownTO time.Duration
+	httpServer  *http.Server
+	health      *handlers.Health
+	logger      *slog.Logger
+	shutdownTO  time.Duration
 	janitorStop chan struct{}
 }
 
