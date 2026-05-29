@@ -12,7 +12,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/shophub-project-2026/shop/internal/articles"
 	"github.com/shophub-project-2026/shop/internal/cart"
@@ -28,17 +27,19 @@ import (
 
 // Server is the top-level HTTP server for the Shop service.
 type Server struct {
-	httpServer *http.Server
-	health     *handlers.Health
-	logger     *slog.Logger
-	shutdownTO time.Duration
+	httpServer  *http.Server
+	health      *handlers.Health
+	logger      *slog.Logger
+	shutdownTO  time.Duration
 	janitorStop chan struct{}
 }
 
-// New constructs a Server bound to cfg.HTTPAddr with all routes wired.
-// ethClient may be nil — payment endpoints are disabled when no RPC is configured.
-func New(cfg *config.Config, logger *slog.Logger, pool *pgxpool.Pool, ethClient payment.EthClient) *Server {
-	health := handlers.NewHealth(pool)
+// New constructs a Server from the chosen persistence backend. articleRepo
+// and orderRepo are backend-agnostic (PostgreSQL or Redis); pinger drives the
+// readiness probe and may be nil. ethClient may be nil — payment endpoints
+// are disabled when no RPC is configured.
+func New(cfg *config.Config, logger *slog.Logger, articleRepo articles.Repository, orderRepo orders.Repository, pinger handlers.Pinger, ethClient payment.EthClient) *Server {
+	health := handlers.NewHealth(pinger)
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", health.Live)
@@ -48,8 +49,7 @@ func New(cfg *config.Config, logger *slog.Logger, pool *pgxpool.Pool, ethClient 
 	adminMW := middleware.Admin(cfg.AdminKey)
 
 	// Wrap repos with instrumentation so business metrics stay in sync.
-	baseArticleRepo := articles.NewPGRepository(pool)
-	articleRepo := shopmetrics.NewInstrumentedArticleRepo(context.Background(), baseArticleRepo)
+	articleRepo = shopmetrics.NewInstrumentedArticleRepo(context.Background(), articleRepo)
 
 	cartStore := cart.NewStore(cart.WithTTL(30 * time.Minute))
 	cartStore.SetSizeObserver(func(activeCarts int) {
@@ -58,8 +58,7 @@ func New(cfg *config.Config, logger *slog.Logger, pool *pgxpool.Pool, ethClient 
 	janitorStop := make(chan struct{})
 	cartStore.StartJanitor(5*time.Minute, janitorStop)
 
-	baseOrderRepo := orders.NewPGRepository(pool)
-	orderRepo := shopmetrics.NewInstrumentedOrderRepo(baseOrderRepo)
+	orderRepo = shopmetrics.NewInstrumentedOrderRepo(orderRepo)
 
 	// JSON API mounted under /api/v1/ so the same path roots (articles, cart,
 	// orders) can also be used by the SSR UI without ServeMux pattern collisions.

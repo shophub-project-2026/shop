@@ -7,10 +7,13 @@ import (
 	"os/signal"
 	"syscall"
 
+	"github.com/shophub-project-2026/shop/internal/articles"
 	"github.com/shophub-project-2026/shop/internal/config"
 	"github.com/shophub-project-2026/shop/internal/db"
+	"github.com/shophub-project-2026/shop/internal/orders"
 	"github.com/shophub-project-2026/shop/internal/payment"
 	"github.com/shophub-project-2026/shop/internal/server"
+	"github.com/shophub-project-2026/shop/internal/server/handlers"
 	"github.com/shophub-project-2026/shop/internal/tracing"
 )
 
@@ -46,17 +49,43 @@ func run() error {
 		logger.Info("tracing enabled", "otlp_endpoint", cfg.OTLPEndpoint)
 	}
 
-	pool, err := db.Open(ctx, cfg)
-	if err != nil {
-		return err
-	}
-	defer pool.Close()
+	// Select the persistence backend. PostgreSQL is the default; Redis is
+	// used for shops created with database=light (deployed by the Redis
+	// operator), where SHOP_DB_TYPE=redis is injected by the shop-operator.
+	var (
+		articleRepo articles.Repository
+		orderRepo   orders.Repository
+		pinger      handlers.Pinger
+	)
 
-	logger.Info("running database migrations")
-	if err := db.RunMigrations(ctx, pool, db.Migrations, "migrations"); err != nil {
-		return err
+	switch cfg.DBType {
+	case "redis":
+		rdb, err := db.OpenRedis(ctx, cfg)
+		if err != nil {
+			return err
+		}
+		defer func() { _ = rdb.Close() }()
+		logger.Info("connected to redis", "addr", cfg.RedisAddr)
+		articleRepo = articles.NewRedisRepository(rdb)
+		orderRepo = orders.NewRedisRepository(rdb)
+		pinger = db.RedisPinger{Client: rdb}
+	default: // "postgres"
+		pool, err := db.Open(ctx, cfg)
+		if err != nil {
+			return err
+		}
+		defer pool.Close()
+
+		logger.Info("running database migrations")
+		if err := db.RunMigrations(ctx, pool, db.Migrations, "migrations"); err != nil {
+			return err
+		}
+		logger.Info("migrations applied")
+
+		articleRepo = articles.NewPGRepository(pool)
+		orderRepo = orders.NewPGRepository(pool)
+		pinger = pool
 	}
-	logger.Info("migrations applied")
 
 	// Ethereum client is optional — payment endpoints are disabled when
 	// SHOP_ETH_RPC_URL is not configured (e.g. local dev without testnet).
@@ -72,7 +101,7 @@ func run() error {
 		logger.Info("SHOP_ETH_RPC_URL not set, payment endpoints disabled")
 	}
 
-	srv := server.New(cfg, logger, pool, ethClient)
+	srv := server.New(cfg, logger, articleRepo, orderRepo, pinger, ethClient)
 	return srv.Run(ctx)
 }
 

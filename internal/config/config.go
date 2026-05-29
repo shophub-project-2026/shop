@@ -35,14 +35,25 @@ type Config struct {
 	DBPassword string
 
 	// Database pool tuning. Defaults are conservative; override per-env.
-	DBMaxConns           int32
-	DBMinConns           int32
-	DBMaxConnLifetime    time.Duration
-	DBMaxConnIdleTime    time.Duration
-	DBHealthCheckPeriod  time.Duration
+	DBMaxConns          int32
+	DBMinConns          int32
+	DBMaxConnLifetime   time.Duration
+	DBMaxConnIdleTime   time.Duration
+	DBHealthCheckPeriod time.Duration
 
 	// Admin API key — required in X-Admin-Key header for write endpoints.
 	AdminKey string
+
+	// DBType selects the persistence backend: "postgres" (default) or
+	// "redis". The shop-operator sets this to "redis" for shops created
+	// with database=light, where a Redis instance is deployed by the
+	// Redis operator instead of a CloudNativePG PostgreSQL cluster.
+	DBType string // SHOP_DB_TYPE
+
+	// Redis connection parameters (used when DBType == "redis").
+	RedisAddr     string // SHOP_REDIS_ADDR — host:port
+	RedisPassword string // SHOP_REDIS_PASSWORD
+	RedisDB       int    // SHOP_REDIS_DB — logical DB index
 
 	// Ethereum / Sepolia testnet configuration.
 	EthRPCURL   string  // SHOP_ETH_RPC_URL
@@ -62,16 +73,19 @@ func Load() (*Config, error) {
 		Environment:     getEnv("SHOP_ENV", "development"),
 		LogLevel:        getEnv("SHOP_LOG_LEVEL", "info"),
 		ShutdownTimeout: 15 * time.Second,
+		DBType:          getEnv("SHOP_DB_TYPE", "postgres"),
 		DBHost:          getEnv("SHOP_DB_HOST", "localhost"),
 		DBPort:          getEnv("SHOP_DB_PORT", "5432"),
 		DBName:          getEnv("SHOP_DB_NAME", "shop_db"),
 		DBUser:          getEnv("SHOP_DB_USER", "shop_user"),
 		DBPassword:      getEnv("SHOP_DB_PASSWORD", "shop_password"),
+		RedisAddr:       getEnv("SHOP_REDIS_ADDR", "localhost:6379"),
+		RedisPassword:   getEnv("SHOP_REDIS_PASSWORD", ""),
 		AdminKey:        getEnv("SHOP_ADMIN_KEY", ""),
-		EthRPCURL:    getEnv("SHOP_ETH_RPC_URL", ""),
-		EthWallet:    getEnv("SHOP_ETH_WALLET", ""),
-		EthPriceUSD:  3000.0, // default mock rate; override with SHOP_ETH_PRICE_USD
-		OTLPEndpoint: getEnv("SHOP_OTLP_ENDPOINT", ""),
+		EthRPCURL:       getEnv("SHOP_ETH_RPC_URL", ""),
+		EthWallet:       getEnv("SHOP_ETH_WALLET", ""),
+		EthPriceUSD:     3000.0, // default mock rate; override with SHOP_ETH_PRICE_USD
+		OTLPEndpoint:    getEnv("SHOP_OTLP_ENDPOINT", ""),
 
 		DBMaxConns:          25,
 		DBMinConns:          2,
@@ -96,6 +110,13 @@ func Load() (*Config, error) {
 				return fmt.Errorf("SHOP_DB_MIN_CONNS must be >= 0")
 			}
 			cfg.DBMinConns = int32(n)
+			return nil
+		}},
+		{"SHOP_REDIS_DB", func(n int) error {
+			if n < 0 {
+				return fmt.Errorf("SHOP_REDIS_DB must be >= 0")
+			}
+			cfg.RedisDB = n
 			return nil
 		}},
 	} {
@@ -148,6 +169,14 @@ func (c *Config) validate() error {
 	}
 	if c.ShutdownTimeout <= 0 {
 		return fmt.Errorf("shutdown timeout must be positive, got %s", c.ShutdownTimeout)
+	}
+	switch c.DBType {
+	case "postgres", "redis":
+	default:
+		return fmt.Errorf("database type %q must be one of postgres|redis", c.DBType)
+	}
+	if c.DBType == "redis" && c.RedisAddr == "" {
+		return errors.New("SHOP_REDIS_ADDR must be set when SHOP_DB_TYPE=redis")
 	}
 	return nil
 }
