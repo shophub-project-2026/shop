@@ -1,15 +1,13 @@
 {{template "layout.html" .}}
 {{define "title"}}Admin — Orders{{end}}
 {{define "content"}}
-<div class="flex items-center justify-between mb-6">
+<div class="flex items-center justify-between mb-6 gap-3 flex-wrap">
   <h1 class="text-2xl font-bold text-gray-800">Orders</h1>
-  <span class="text-sm text-gray-500">Total: {{.Total}}</span>
+  <span class="text-sm text-gray-500">{{.Total}} order{{if eq .Total 1}}{{else}}s{{end}}</span>
 </div>
 
-{{if not .Orders}}
-  <p class="text-gray-500">No orders yet.</p>
-{{else}}
-<div class="bg-white rounded-lg shadow-sm border border-gray-200 overflow-hidden">
+{{if .Orders}}
+<div class="bg-white rounded-lg shadow-sm border border-gray-200 overflow-x-auto">
   <table class="w-full text-sm">
     <thead class="bg-gray-50 border-b border-gray-200">
       <tr>
@@ -18,14 +16,15 @@
         <th class="text-right px-4 py-3 text-gray-600">Items</th>
         <th class="text-right px-4 py-3 text-gray-600">Total</th>
         <th class="text-center px-4 py-3 text-gray-600">Status</th>
+        <th class="text-left px-4 py-3 text-gray-600">Tx</th>
         <th class="text-right px-4 py-3 text-gray-600">Created</th>
       </tr>
     </thead>
     <tbody>
       {{range .Orders}}
       <tr class="border-b border-gray-100 last:border-0 hover:bg-gray-50">
-        <td class="px-4 py-3 text-gray-500 font-mono text-xs">{{slice (.ID.String) 0 8}}…</td>
-        <td class="px-4 py-3 text-gray-700 font-mono text-xs">{{.WalletAddress}}</td>
+        <td class="px-4 py-3 text-gray-500 font-mono text-xs" title="{{.ID}}">{{truncID .ID.String}}</td>
+        <td class="px-4 py-3 text-gray-700 font-mono text-xs" title="{{.WalletAddress}}">{{truncWallet .WalletAddress}}</td>
         <td class="px-4 py-3 text-right text-gray-700">{{len .Items}}</td>
         <td class="px-4 py-3 text-right text-gray-700">${{printf "%.2f" .TotalAmount}}</td>
         <td class="px-4 py-3 text-center">
@@ -35,6 +34,16 @@
             <span class="bg-yellow-100 text-yellow-700 text-xs px-2 py-0.5 rounded-full">pending</span>
           {{else}}
             <span class="bg-red-100 text-red-700 text-xs px-2 py-0.5 rounded-full">{{.Status}}</span>
+          {{end}}
+        </td>
+        <td class="px-4 py-3 text-left">
+          {{$tx := derefStr .TxHash}}
+          {{if $tx}}
+            <a href="https://sepolia.etherscan.io/tx/{{$tx}}" target="_blank" rel="noopener noreferrer"
+               class="text-indigo-600 hover:underline font-mono text-xs"
+               title="{{$tx}}">{{slice $tx 0 10}}… ↗</a>
+          {{else}}
+            <span class="text-gray-300 text-xs">—</span>
           {{end}}
         </td>
         <td class="px-4 py-3 text-right text-gray-500">{{.CreatedAt.Format "2006-01-02 15:04"}}</td>
@@ -50,5 +59,10 @@
   {{if .HasNext}}<a href="/admin/orders?offset={{.NextOffset}}" class="text-indigo-600 hover:underline ml-auto">Next →</a>{{end}}
 </div>
 {{end}}
+{{else}}
+<div class="bg-white rounded-lg shadow-sm border border-gray-200 p-12 text-center">
+  <p class="text-gray-500 mb-2">No orders yet.</p>
+  <p class="text-xs text-gray-400">Orders appear here once a customer places one in the store.</p>
+</div>
 {{end}}
 {{end}}

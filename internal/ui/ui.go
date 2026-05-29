@@ -49,6 +49,29 @@ var funcMap = template.FuncMap{
 		return s[i:j]
 	},
 	"ne": func(a, b string) bool { return a != b },
+	// truncWallet shortens a 0x… Ethereum address for UI display:
+	// "0xdd6eb16946…7214" — keeps the leading 0x prefix and 4 trailing chars.
+	"truncWallet": func(s string) string {
+		if len(s) < 12 {
+			return s
+		}
+		return s[:10] + "…" + s[len(s)-4:]
+	},
+	// truncID shortens a UUID for compact admin tables.
+	"truncID": func(s string) string {
+		if len(s) < 12 {
+			return s
+		}
+		return s[:8] + "…"
+	},
+	// derefStr converts an optional *string to a string ("" if nil).
+	// Needed for fields like Order.TxHash which is *string.
+	"derefStr": func(s *string) string {
+		if s == nil {
+			return ""
+		}
+		return *s
+	},
 }
 
 func parse(name string) *template.Template {
@@ -209,8 +232,29 @@ func isValidWallet(s string) bool {
 func (h *Handler) cartView(w http.ResponseWriter, r *http.Request) {
 	wallet := r.URL.Query().Get("wallet")
 	c := h.cartStore.Get(wallet)
+	// Enrich raw cart items (ArticleID + Quantity) with name/unit price/line
+	// total so the template can render a useful summary instead of a wall of
+	// UUIDs and the customer can see what the grand total will be.
+	var items []map[string]any
+	var total float64
+	for _, item := range c.Items {
+		a, err := h.articleRepo.Get(r.Context(), item.ArticleID)
+		if err != nil {
+			continue
+		}
+		line := a.Price * float64(item.Quantity)
+		total += line
+		items = append(items, map[string]any{
+			"ArticleID": item.ArticleID,
+			"Name":      a.Name,
+			"Quantity":  item.Quantity,
+			"UnitPrice": a.Price,
+			"LineTotal": line,
+		})
+	}
 	h.renderWithRequest(w, r, "customer/cart.html", map[string]any{
-		"Items":  c.Items,
+		"Items":  items,
+		"Total":  total,
 		"Wallet": wallet,
 	})
 }

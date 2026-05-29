@@ -7,32 +7,39 @@
   <script src="https://cdn.tailwindcss.com"></script>
   <script src="https://cdn.jsdelivr.net/npm/ethers@5.7.2/dist/ethers.umd.min.js" type="text/javascript"></script>
 </head>
-<body class="bg-gray-50 min-h-screen">
+<body class="bg-gray-50 min-h-screen flex flex-col">
   <nav class="bg-white shadow-sm border-b border-gray-200">
-    <div class="max-w-5xl mx-auto px-4 py-3 flex items-center justify-between">
-      <a href="/" class="text-xl font-bold text-indigo-600">Shop</a>
-      <div class="flex items-center gap-4 text-sm">
-        <a href="/" class="text-gray-600 hover:text-indigo-600">Articles</a>
-        <a href="#" onclick="goCart(event)" class="text-gray-600 hover:text-indigo-600">Cart</a>
-        {{if .IsAdmin}}
-        <a href="/admin/articles" class="text-gray-500 hover:text-indigo-600">Articles</a>
-        <a href="/admin/orders" class="text-gray-500 hover:text-indigo-600">Orders</a>
+    <div class="max-w-5xl mx-auto px-4 py-3 flex items-center justify-between gap-3">
+      {{if .IsAdmin}}
+      <a href="/admin/articles" class="text-xl font-bold text-indigo-600 flex items-center gap-2 shrink-0">
+        Shop <span class="text-xs font-medium bg-indigo-100 text-indigo-700 px-2 py-0.5 rounded uppercase tracking-wide">Admin</span>
+      </a>
+      <div class="flex items-center gap-4 text-sm flex-wrap justify-end">
+        <a href="/admin/articles" class="text-gray-600 hover:text-indigo-600">Articles</a>
+        <a href="/admin/orders" class="text-gray-600 hover:text-indigo-600">Orders</a>
+        <a href="/" class="text-gray-400 hover:text-indigo-600" title="See the shop as a customer">Preview store</a>
         <form method="POST" action="/admin/logout" class="inline">
           <input type="hidden" name="csrf_token" value="{{.CSRF}}">
           <button type="submit" class="text-xs text-gray-400 hover:text-red-500" title="Sign out">Sign out</button>
         </form>
-        {{else}}
-        <a href="/admin/articles" class="text-gray-500 hover:text-indigo-600">Admin</a>
-        {{end}}
+      </div>
+      {{else}}
+      <a href="/" class="text-xl font-bold text-indigo-600 shrink-0">Shop</a>
+      <div class="flex items-center gap-4 text-sm flex-wrap justify-end">
+        <a href="/" class="text-gray-600 hover:text-indigo-600">Articles</a>
+        <a href="#" onclick="goCart(event)" class="text-gray-600 hover:text-indigo-600">Cart</a>
         <span id="walletBadge" class="hidden bg-indigo-50 text-indigo-700 text-xs px-2 py-1 rounded font-mono"></span>
         <button id="connectBtn" onclick="connectWallet()"
                 class="bg-orange-500 text-white text-xs px-3 py-1.5 rounded hover:bg-orange-600">
           Connect Wallet
         </button>
+        <a href="/admin/login" class="text-xs text-gray-400 hover:text-indigo-600 border-l border-gray-200 pl-4"
+           title="Sign in as the shop owner">Owner</a>
       </div>
+      {{end}}
     </div>
   </nav>
-  <main class="max-w-5xl mx-auto px-4 py-8">
+  <main class="max-w-5xl mx-auto px-4 py-8 flex-1 w-full">
     {{with .Flash}}{{if .Kind}}
       {{$base := "mb-6 px-4 py-3 rounded text-sm border"}}
       {{if eq .Kind "ok"}}
@@ -46,6 +53,7 @@
     {{block "content" .}}{{end}}
   </main>
 
+  {{if not .IsAdmin}}
   <script>
     // Wallet stored in localStorage, exposed as window.SHOP_WALLET.
     // Re-rendered on every page load and after a successful connect.
@@ -55,17 +63,22 @@
       const w = shopWallet();
       const badge = document.getElementById('walletBadge');
       const btn   = document.getElementById('connectBtn');
-      if (w) {
-        badge.textContent = w.slice(0, 6) + '…' + w.slice(-4);
-        badge.classList.remove('hidden');
-        btn.textContent = 'Disconnect';
-        btn.onclick = function () { localStorage.removeItem('shop_wallet'); renderWalletUI(); fillWalletInputs(); };
-      } else {
-        badge.classList.add('hidden');
-        btn.textContent = 'Connect Wallet';
-        btn.onclick = connectWallet;
+      if (badge && btn) {
+        if (w) {
+          badge.textContent = w.slice(0, 6) + '…' + w.slice(-4);
+          badge.classList.remove('hidden');
+          btn.textContent = 'Disconnect';
+          btn.onclick = function () { localStorage.removeItem('shop_wallet'); renderWalletUI(); };
+        } else {
+          badge.classList.add('hidden');
+          btn.textContent = 'Connect Wallet';
+          btn.onclick = connectWallet;
+        }
       }
       fillWalletInputs();
+      // Custom event so individual pages can react to wallet state changes
+      // happening in the same tab (window 'storage' fires only cross-tab).
+      window.dispatchEvent(new CustomEvent('shop:wallet-changed', { detail: { wallet: w } }));
     }
 
     // Populate any input[name="wallet_address"] that exists on the current page.
@@ -99,5 +112,6 @@
 
     document.addEventListener('DOMContentLoaded', renderWalletUI);
   </script>
+  {{end}}
 </body>
 </html>
