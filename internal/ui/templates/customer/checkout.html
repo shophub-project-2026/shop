@@ -3,7 +3,7 @@
 {{define "content"}}
 <div class="max-w-lg">
   <h1 class="text-2xl font-bold text-gray-800 mb-2">Checkout</h1>
-  <p class="text-sm text-gray-500 mb-6">Wallet: <span class="font-mono">{{.Wallet}}</span></p>
+  <p class="text-sm text-gray-500 mb-6">Wallet: <span class="font-mono" title="{{.Wallet}}">{{truncWallet .Wallet}}</span></p>
 
   {{if .Error}}
   <div class="mb-4 p-3 rounded bg-red-50 text-red-700 text-sm border border-red-200">{{.Error}}</div>
@@ -25,7 +25,7 @@
       <span>Pay in ETH</span>
       <span class="text-indigo-600">{{printf "%.8f" .EthAmount}} ETH</span>
     </div>
-    <p class="text-xs text-gray-400 mt-2">Send to: <span class="font-mono">{{.RecipientAddr}}</span></p>
+    <p class="text-xs text-gray-400 mt-2">Send to: <span class="font-mono" title="{{.RecipientAddr}}">{{truncWallet .RecipientAddr}}</span></p>
   </div>
 
   <div class="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
