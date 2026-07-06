@@ -7,7 +7,10 @@
 </div>
 
 {{if not .Articles}}
-  <p class="text-gray-500">No articles yet.</p>
+<div class="bg-white rounded-lg shadow-sm border border-gray-200 p-12 text-center">
+  <p class="text-gray-500 mb-4">No articles yet.</p>
+  <a href="/admin/articles/new" class="inline-block bg-indigo-600 text-white px-5 py-2 rounded text-sm hover:bg-indigo-700">Create your first article</a>
+</div>
 {{else}}
 <div class="bg-white rounded-lg shadow-sm border border-gray-200 overflow-hidden">
   <table class="w-full text-sm">

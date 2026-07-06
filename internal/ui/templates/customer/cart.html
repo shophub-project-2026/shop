@@ -1,45 +1,63 @@
 {{template "layout.html" .}}
 {{define "title"}}Cart{{end}}
 {{define "content"}}
-<h1 class="text-2xl font-bold text-gray-800 mb-2">Your Cart</h1>
-<p class="text-sm text-gray-500 mb-6">Wallet: <span class="font-mono">{{.Wallet}}</span></p>
+<div class="flex items-center justify-between mb-6 gap-4 flex-wrap">
+  <h1 class="text-2xl font-bold text-gray-800">Your Cart</h1>
+  <span class="text-sm text-gray-500">Wallet: <span class="font-mono">{{truncWallet .Wallet}}</span></span>
+</div>
 
-{{if not .Items}}
-  <div class="bg-white rounded-lg shadow-sm border border-gray-200 p-8 text-center">
-    <p class="text-gray-500 mb-3">Your cart is empty.</p>
-    <a href="/" class="inline-block bg-indigo-600 text-white px-4 py-2 rounded text-sm hover:bg-indigo-700">Browse articles</a>
-  </div>
-{{else}}
+{{if .Items}}
 <div class="bg-white rounded-lg shadow-sm border border-gray-200 overflow-hidden mb-6">
   <table class="w-full text-sm">
     <thead class="bg-gray-50 border-b border-gray-200">
       <tr>
         <th class="text-left px-4 py-3 text-gray-600">Article</th>
         <th class="text-right px-4 py-3 text-gray-600">Qty</th>
+        <th class="text-right px-4 py-3 text-gray-600">Unit price</th>
+        <th class="text-right px-4 py-3 text-gray-600">Line total</th>
         <th class="text-right px-4 py-3 text-gray-600"></th>
       </tr>
     </thead>
     <tbody>
       {{range .Items}}
       <tr class="border-b border-gray-100 last:border-0">
-        <td class="px-4 py-3 text-gray-800 font-mono text-xs">{{.ArticleID}}</td>
+        <td class="px-4 py-3 text-gray-800">{{.Name}}</td>
         <td class="px-4 py-3 text-right text-gray-600">{{.Quantity}}</td>
+        <td class="px-4 py-3 text-right text-gray-600">${{printf "%.2f" .UnitPrice}}</td>
+        <td class="px-4 py-3 text-right text-gray-800 font-medium">${{printf "%.2f" .LineTotal}}</td>
         <td class="px-4 py-3 text-right">
-          <form method="POST" action="/cart/remove" class="inline">
+          <form method="POST" action="/cart/remove" class="inline"
+                onsubmit="return confirm('Remove {{.Name}} from cart?');">
             <input type="hidden" name="csrf_token" value="{{$.CSRF}}">
             <input type="hidden" name="article_id" value="{{.ArticleID}}">
-            <input type="hidden" name="wallet_address" value="">
+            <input type="hidden" name="wallet_address" value="{{$.Wallet}}">
             <button type="submit" class="text-red-500 hover:text-red-700 text-xs">Remove</button>
           </form>
         </td>
       </tr>
       {{end}}
     </tbody>
+    <tfoot class="bg-gray-50 border-t border-gray-200">
+      <tr>
+        <td colspan="3" class="px-4 py-3 text-right font-semibold text-gray-700">Total</td>
+        <td class="px-4 py-3 text-right font-bold text-indigo-600">${{printf "%.2f" .Total}}</td>
+        <td></td>
+      </tr>
+    </tfoot>
   </table>
 </div>
-<a id="checkoutLink" href="/checkout?wallet={{.Wallet}}"
-   class="inline-block bg-indigo-600 text-white px-6 py-2 rounded hover:bg-indigo-700 font-medium">
-  Checkout
-</a>
+
+<div class="flex items-center justify-between gap-3 flex-wrap">
+  <a href="/" class="text-sm text-gray-500 hover:text-indigo-600">← Continue shopping</a>
+  <a href="/checkout?wallet={{.Wallet}}"
+     class="inline-block bg-indigo-600 text-white px-6 py-2 rounded hover:bg-indigo-700 font-medium">
+    Proceed to checkout
+  </a>
+</div>
+{{else}}
+<div class="bg-white rounded-lg shadow-sm border border-gray-200 p-12 text-center">
+  <p class="text-gray-500 mb-4">Your cart is empty.</p>
+  <a href="/" class="inline-block bg-indigo-600 text-white px-5 py-2 rounded text-sm hover:bg-indigo-700">Browse articles</a>
+</div>
 {{end}}
 {{end}}

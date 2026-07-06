@@ -1,5 +1,5 @@
 {{template "layout.html" .}}
-{{define "title"}}{{if .Article.ID.String | ne "00000000-0000-0000-0000-000000000000"}}Edit{{else}}New{{end}} Article{{end}}
+{{define "title"}}{{if .IsEdit}}Edit{{else}}New{{end}} Article{{end}}
 {{define "content"}}
 <div class="max-w-md">
   <a href="/admin/articles" class="text-sm text-indigo-600 hover:underline mb-4 inline-block">← Back to articles</a>

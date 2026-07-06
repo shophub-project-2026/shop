@@ -26,16 +26,39 @@ CREATE TABLE IF NOT EXISTS schema_migrations (
 // file has been edited on disk since it was first run.
 var ErrMigrationChecksumMismatch = errors.New("migration checksum mismatch")
 
+// migrationLockID is a stable advisory-lock key used to serialise concurrent
+// RunMigrations calls from multiple pods. The value is arbitrary but must be
+// consistent across deployments.
+const migrationLockID int64 = 5_765_169_143_718_794_700
+
 // RunMigrations applies every *.sql file in fsys/dir, in lexicographic order,
 // that has not been applied yet. Each migration is recorded in the
 // schema_migrations table together with a SHA-256 checksum so that future
 // runs can detect tampering with already-applied files.
 //
+// A session-level PostgreSQL advisory lock serialises concurrent calls so that
+// multiple pods starting simultaneously do not race on schema_migrations table
+// creation or on inserting migration records.
+//
 // Each migration runs in its own transaction. If a migration fails the
 // transaction is rolled back and the error is returned — no partial state
 // is left behind.
 func RunMigrations(ctx context.Context, pool *pgxpool.Pool, fsys embed.FS, dir string) error {
-	if _, err := pool.Exec(ctx, migrationsTableDDL); err != nil {
+	conn, err := pool.Acquire(ctx)
+	if err != nil {
+		return fmt.Errorf("acquire migration connection: %w", err)
+	}
+	defer conn.Release()
+
+	if _, err := conn.Exec(ctx, "SELECT pg_advisory_lock($1)", migrationLockID); err != nil {
+		return fmt.Errorf("acquire migration lock: %w", err)
+	}
+	// pg_advisory_lock is session-scoped: it is NOT released when the connection
+	// is returned to the pool. Defer an explicit unlock so the lock is freed
+	// before conn.Release() recycles the connection.
+	defer conn.Exec(context.Background(), "SELECT pg_advisory_unlock($1)", migrationLockID) //nolint:errcheck
+
+	if _, err := conn.Exec(ctx, migrationsTableDDL); err != nil {
 		return fmt.Errorf("create schema_migrations: %w", err)
 	}
 
@@ -52,7 +75,7 @@ func RunMigrations(ctx context.Context, pool *pgxpool.Pool, fsys embed.FS, dir s
 	}
 	sort.Strings(names)
 
-	applied, err := loadAppliedMigrations(ctx, pool)
+	applied, err := loadAppliedMigrations(ctx, conn)
 	if err != nil {
 		return err
 	}
@@ -80,8 +103,8 @@ func RunMigrations(ctx context.Context, pool *pgxpool.Pool, fsys embed.FS, dir s
 	return nil
 }
 
-func loadAppliedMigrations(ctx context.Context, pool *pgxpool.Pool) (map[string]string, error) {
-	rows, err := pool.Query(ctx, `SELECT version, checksum FROM schema_migrations`)
+func loadAppliedMigrations(ctx context.Context, conn *pgxpool.Conn) (map[string]string, error) {
+	rows, err := conn.Query(ctx, `SELECT version, checksum FROM schema_migrations`)
 	if err != nil {
 		return nil, fmt.Errorf("list applied migrations: %w", err)
 	}
