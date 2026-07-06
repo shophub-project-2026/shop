@@ -11,7 +11,7 @@ import "net/http"
 // without TLS termination; raise it once the service is fronted by HTTPS.
 func SecurityHeaders(next http.Handler) http.Handler {
 	const csp = "default-src 'self'; " +
-		"script-src 'self' 'unsafe-inline' https://cdn.tailwindcss.com https://cdn.ethers.io; " +
+		"script-src 'self' 'unsafe-inline' https://cdn.tailwindcss.com https://cdn.jsdelivr.net; " +
 		"style-src 'self' 'unsafe-inline' https://cdn.tailwindcss.com; " +
 		"img-src 'self' data:; " +
 		"connect-src 'self' https:; " +

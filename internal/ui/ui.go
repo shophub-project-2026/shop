@@ -16,6 +16,7 @@ import (
 	"github.com/shophub-project-2026/shop/internal/articles"
 	"github.com/shophub-project-2026/shop/internal/cart"
 	"github.com/shophub-project-2026/shop/internal/orders"
+	"github.com/shophub-project-2026/shop/internal/payment"
 	"github.com/shophub-project-2026/shop/internal/server/middleware"
 )
 
@@ -48,6 +49,29 @@ var funcMap = template.FuncMap{
 		return s[i:j]
 	},
 	"ne": func(a, b string) bool { return a != b },
+	// truncWallet shortens a 0x… Ethereum address for UI display:
+	// "0xdd6eb16946…7214" — keeps the leading 0x prefix and 4 trailing chars.
+	"truncWallet": func(s string) string {
+		if len(s) < 12 {
+			return s
+		}
+		return s[:10] + "…" + s[len(s)-4:]
+	},
+	// truncID shortens a UUID for compact admin tables.
+	"truncID": func(s string) string {
+		if len(s) < 12 {
+			return s
+		}
+		return s[:8] + "…"
+	},
+	// derefStr converts an optional *string to a string ("" if nil).
+	// Needed for fields like Order.TxHash which is *string.
+	"derefStr": func(s *string) string {
+		if s == nil {
+			return ""
+		}
+		return *s
+	},
 }
 
 func parse(name string) *template.Template {
@@ -105,6 +129,7 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /cart", h.cartView)
 	mux.HandleFunc("GET /checkout", h.checkout)
 	mux.HandleFunc("POST /checkout", h.checkoutCreate)
+	mux.HandleFunc("POST /checkout/cancel", h.checkoutCancel)
 	mux.HandleFunc("GET /404", h.notFound) // explicitly available for testing
 
 	// admin
@@ -207,8 +232,29 @@ func isValidWallet(s string) bool {
 func (h *Handler) cartView(w http.ResponseWriter, r *http.Request) {
 	wallet := r.URL.Query().Get("wallet")
 	c := h.cartStore.Get(wallet)
+	// Enrich raw cart items (ArticleID + Quantity) with name/unit price/line
+	// total so the template can render a useful summary instead of a wall of
+	// UUIDs and the customer can see what the grand total will be.
+	var items []map[string]any
+	var total float64
+	for _, item := range c.Items {
+		a, err := h.articleRepo.Get(r.Context(), item.ArticleID)
+		if err != nil {
+			continue
+		}
+		line := a.Price * float64(item.Quantity)
+		total += line
+		items = append(items, map[string]any{
+			"ArticleID": item.ArticleID,
+			"Name":      a.Name,
+			"Quantity":  item.Quantity,
+			"UnitPrice": a.Price,
+			"LineTotal": line,
+		})
+	}
 	h.renderWithRequest(w, r, "customer/cart.html", map[string]any{
-		"Items":  c.Items,
+		"Items":  items,
+		"Total":  total,
 		"Wallet": wallet,
 	})
 }
@@ -234,9 +280,16 @@ func (h *Handler) checkout(w http.ResponseWriter, r *http.Request) {
 	switch {
 	case err == nil:
 		// Existing pending order — show the pay-with-MetaMask section.
+		// EthWei is the exact integer amount the backend will require at
+		// verification time. We hand it to the JS as a string so MetaMask
+		// signs the precise wei value; converting back through a float-
+		// truncated ETH literal (e.g. "%.8f") loses the last few digits
+		// and produces an "insufficient payment" error of a few thousand
+		// wei.
 		data["OrderID"] = o.ID.String()
 		data["TotalUSD"] = o.TotalAmount
 		data["EthAmount"] = o.TotalAmount / h.ethPrice
+		data["EthWei"] = payment.USDtoWei(o.TotalAmount, h.ethPrice).String()
 	case errors.Is(err, orders.ErrNotFound):
 		// No pending order — preview the cart for confirmation.
 		cartData := h.cartStore.Get(wallet)
@@ -320,6 +373,49 @@ func (h *Handler) checkoutCreate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	h.cartStore.Clear(wallet)
+	http.Redirect(w, r, "/checkout?wallet="+wallet, http.StatusSeeOther)
+}
+
+// checkoutCancel marks a pending order as failed so the customer can
+// place a fresh one. Needed when payment verification fails (e.g. RPC
+// outage) and the customer would otherwise be stuck seeing the old
+// order's totals on /checkout instead of their current cart.
+//
+// Authorisation: the form-submitted wallet must match the order's
+// wallet — same trust model as the rest of the customer flow (wallet
+// == identity, no MetaMask signature is required for cancel).
+func (h *Handler) checkoutCancel(w http.ResponseWriter, r *http.Request) {
+	_ = r.ParseForm()
+	wallet := strings.TrimSpace(r.FormValue("wallet_address"))
+	if !isValidWallet(wallet) {
+		http.Redirect(w, r, "/", http.StatusSeeOther)
+		return
+	}
+	orderID, err := uuid.Parse(r.FormValue("order_id"))
+	if err != nil {
+		http.Redirect(w, r, "/checkout?wallet="+wallet, http.StatusSeeOther)
+		return
+	}
+
+	o, err := h.orderRepo.Get(r.Context(), orderID)
+	if errors.Is(err, orders.ErrNotFound) {
+		http.Redirect(w, r, "/checkout?wallet="+wallet, http.StatusSeeOther)
+		return
+	}
+	if err != nil {
+		h.serverError(w, r, err)
+		return
+	}
+	if o.WalletAddress != wallet || o.Status != orders.StatusPending {
+		http.Redirect(w, r, "/checkout?wallet="+wallet, http.StatusSeeOther)
+		return
+	}
+
+	if err := h.orderRepo.UpdateStatus(r.Context(), orderID, orders.StatusFailed, nil); err != nil {
+		h.serverError(w, r, err)
+		return
+	}
+	setFlash(w, flashSuccess, "Pending order cancelled. You can place a new one.")
 	http.Redirect(w, r, "/checkout?wallet="+wallet, http.StatusSeeOther)
 }
 

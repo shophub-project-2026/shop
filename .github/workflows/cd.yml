@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - main
+      - development
     tags:
       - 'v[0-9]+.[0-9]+.[0-9]+'
 
@@ -33,8 +34,9 @@ jobs:
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
       # Generates tags automatically:
-      #   git tag v1.2.3  →  milos2002/shop:1.2.3, :1.2, :1, :latest
-      #   push to main    →  milos2002/shop:main-<sha>
+      #   git tag v1.2.3        →  milos2002/shop:1.2.3, :1.2, :1, :latest
+      #   push to main          →  milos2002/shop:main-<sha>
+      #   push to development   →  milos2002/shop:development, :development-<sha>
       - name: Extract Docker metadata
         id: meta
         uses: docker/metadata-action@v5
@@ -46,6 +48,8 @@ jobs:
             type=semver,pattern={{major}}
             type=raw,value=latest,enable={{is_default_branch}}
             type=sha,prefix=main-,enable=${{ github.ref == 'refs/heads/main' }}
+            type=raw,value=development,enable=${{ github.ref == 'refs/heads/development' }}
+            type=sha,prefix=development-,enable=${{ github.ref == 'refs/heads/development' }}
 
       - name: Build and push Docker image
         uses: docker/build-push-action@v6

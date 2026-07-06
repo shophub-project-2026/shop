@@ -3,7 +3,7 @@
 {{define "content"}}
 <div class="max-w-lg">
   <h1 class="text-2xl font-bold text-gray-800 mb-2">Checkout</h1>
-  <p class="text-sm text-gray-500 mb-6">Wallet: <span class="font-mono">{{.Wallet}}</span></p>
+  <p class="text-sm text-gray-500 mb-6">Wallet: <span class="font-mono" title="{{.Wallet}}">{{truncWallet .Wallet}}</span></p>
 
   {{if .Error}}
   <div class="mb-4 p-3 rounded bg-red-50 text-red-700 text-sm border border-red-200">{{.Error}}</div>
@@ -25,7 +25,7 @@
       <span>Pay in ETH</span>
       <span class="text-indigo-600">{{printf "%.8f" .EthAmount}} ETH</span>
     </div>
-    <p class="text-xs text-gray-400 mt-2">Send to: <span class="font-mono">{{.RecipientAddr}}</span></p>
+    <p class="text-xs text-gray-400 mt-2">Send to: <span class="font-mono" title="{{.RecipientAddr}}">{{truncWallet .RecipientAddr}}</span></p>
   </div>
 
   <div class="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
@@ -49,9 +49,24 @@
     <div id="statusMsg" class="text-sm mt-3"></div>
   </div>
 
+  <form method="POST" action="/checkout/cancel" class="mt-4"
+        onsubmit="return confirm('Cancel this pending order? Your current cart will become the basis for a new order.');">
+    <input type="hidden" name="csrf_token" value="{{.CSRF}}">
+    <input type="hidden" name="wallet_address" value="{{.Wallet}}">
+    <input type="hidden" name="order_id" value="{{.OrderID}}">
+    <button type="submit"
+            class="w-full bg-white border border-gray-300 text-gray-700 py-2 rounded hover:bg-gray-50 text-sm font-medium">
+      Cancel pending order
+    </button>
+    <p class="text-xs text-gray-400 mt-2 text-center">Use this if payment failed and you want to start over.</p>
+  </form>
+
   <script>
     const ORDER_ID    = "{{.OrderID}}";
-    const ETH_AMOUNT  = "{{printf `%.8f` .EthAmount}}";
+    // ETH_WEI is the exact wei amount the backend will require; we sign
+    // this integer directly so a "%.8f" rounding doesn't lose the last
+    // few digits and trigger an "insufficient payment" error.
+    const ETH_WEI     = "{{.EthWei}}";
     const RECIPIENT   = "{{.RecipientAddr}}";
 
     async function connectAndPay() {
@@ -79,7 +94,7 @@
         statusEl.textContent = 'Sending transaction…';
         const tx = await signer.sendTransaction({
           to:    RECIPIENT,
-          value: ethers.utils.parseEther(ETH_AMOUNT),
+          value: ethers.BigNumber.from(ETH_WEI),
         });
         statusEl.textContent = 'Transaction sent: ' + tx.hash;
         statusEl.className   = 'text-sm mt-3 text-green-600';
@@ -97,7 +112,7 @@
       if (!hash) { statusEl.textContent = 'Enter a tx hash.'; return; }
       statusEl.textContent = 'Verifying…';
       try {
-        const res = await fetch('/payment/verify', {
+        const res = await fetch('/api/v1/payment/verify', {
           method:  'POST',
           headers: { 'Content-Type': 'application/json' },
           body:    JSON.stringify({ order_id: ORDER_ID, tx_hash: hash }),
